@@ -5,35 +5,35 @@
  * found in the LICENSE file.
  */
 
-#include "GrAtlasTextContext.h"
-#include "GrDrawContext.h"
 #include "GrDrawingManager.h"
-#include "GrDrawTarget.h"
+
+#include "GrContext.h"
+#include "GrRenderTargetContext.h"
+#include "GrPathRenderingRenderTargetContext.h"
+#include "GrRenderTargetProxy.h"
 #include "GrResourceProvider.h"
 #include "GrSoftwarePathRenderer.h"
-#include "GrStencilAndCoverTextContext.h"
+#include "GrSurfacePriv.h"
+#include "GrSurfaceProxyPriv.h"
+#include "GrTextureContext.h"
+#include "GrTextureOpList.h"
+#include "SkSurface_Gpu.h"
 #include "SkTTopoSort.h"
 
+#include "text/GrAtlasTextContext.h"
+#include "text/GrStencilAndCoverTextContext.h"
 
 void GrDrawingManager::cleanup() {
-    for (int i = 0; i < fDrawTargets.count(); ++i) {
-        fDrawTargets[i]->makeClosed();  // no drawTarget should receive a new command after this
-        fDrawTargets[i]->clearRT();
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        fOpLists[i]->makeClosed();  // no opList should receive a new command after this
+        fOpLists[i]->clearTarget();
 
-        fDrawTargets[i]->unref();
+        // We shouldn't need to do this, but it turns out some clients still hold onto opLists
+        // after a cleanup
+        fOpLists[i]->reset();
     }
 
-    fDrawTargets.reset();
-
-    delete fNVPRTextContext;
-    fNVPRTextContext = nullptr;
-
-    for (int i = 0; i < kNumPixelGeometries; ++i) {
-        delete fTextContexts[i][0];
-        fTextContexts[i][0] = nullptr;
-        delete fTextContexts[i][1];
-        fTextContexts[i][1] = nullptr;
-    }
+    fOpLists.reset();
 
     delete fPathRendererChain;
     fPathRendererChain = nullptr;
@@ -46,6 +46,9 @@ GrDrawingManager::~GrDrawingManager() {
 
 void GrDrawingManager::abandon() {
     fAbandoned = true;
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        fOpLists[i]->abandonGpuResources();
+    }
     this->cleanup();
 }
 
@@ -54,111 +57,206 @@ void GrDrawingManager::freeGpuResources() {
     delete fPathRendererChain;
     fPathRendererChain = nullptr;
     SkSafeSetNull(fSoftwarePathRenderer);
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        fOpLists[i]->freeGpuResources();
+    }
 }
 
 void GrDrawingManager::reset() {
-    for (int i = 0; i < fDrawTargets.count(); ++i) {
-        fDrawTargets[i]->reset();
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        fOpLists[i]->reset();
     }
     fFlushState.reset();
 }
 
-void GrDrawingManager::flush() {
-    SkDEBUGCODE(bool result =) 
-                        SkTTopoSort<GrDrawTarget, GrDrawTarget::TopoSortTraits>(&fDrawTargets);
-    SkASSERT(result);
-
-#if 0
-    for (int i = 0; i < fDrawTargets.count(); ++i) {
-        SkDEBUGCODE(fDrawTargets[i]->dump();)
+gr_instanced::OpAllocator* GrDrawingManager::instancingAllocator() {
+    if (fInstancingAllocator) {
+        return fInstancingAllocator.get();
     }
+
+    fInstancingAllocator = fContext->getGpu()->createInstancedRenderingAllocator();
+    return fInstancingAllocator.get();
+}
+
+// MDB TODO: make use of the 'proxy' parameter.
+void GrDrawingManager::internalFlush(GrSurfaceProxy*, GrResourceCache::FlushType type) {
+    if (fFlushing || this->wasAbandoned()) {
+        return;
+    }
+    fFlushing = true;
+    bool flushed = false;
+
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        // Semi-usually the GrOpLists are already closed at this point, but sometimes Ganesh
+        // needs to flush mid-draw. In that case, the SkGpuDevice's GrOpLists won't be closed
+        // but need to be flushed anyway. Closing such GrOpLists here will mean new
+        // GrOpLists will be created to replace them if the SkGpuDevice(s) write to them again.
+        fOpLists[i]->makeClosed();
+    }
+
+#ifdef ENABLE_MDB
+    SkDEBUGCODE(bool result =)
+                        SkTTopoSort<GrOpList, GrOpList::TopoSortTraits>(&fOpLists);
+    SkASSERT(result);
 #endif
 
-    for (int i = 0; i < fDrawTargets.count(); ++i) {
-        fDrawTargets[i]->prepareBatches(&fFlushState);
+    GrPreFlushResourceProvider preFlushProvider(this);
+
+    if (fPreFlushCBObjects.count()) {
+        // MDB TODO: pre-MDB '1' is the correct pre-allocated size. Post-MDB it will need
+        // to be larger.
+        SkAutoSTArray<1, uint32_t> opListIds(fOpLists.count());
+        for (int i = 0; i < fOpLists.count(); ++i) {
+            opListIds[i] = fOpLists[i]->uniqueID();
+        }
+
+        SkSTArray<1, sk_sp<GrRenderTargetContext>> renderTargetContexts;
+        for (int i = 0; i < fPreFlushCBObjects.count(); ++i) {
+            fPreFlushCBObjects[i]->preFlush(&preFlushProvider,
+                                            opListIds.get(), opListIds.count(),
+                                            &renderTargetContexts);
+            if (!renderTargetContexts.count()) {
+                continue;       // This is fine. No atlases of this type are required for this flush
+            }
+
+            for (int j = 0; j < renderTargetContexts.count(); ++j) {
+                GrRenderTargetOpList* opList = renderTargetContexts[j]->getOpList();
+                if (!opList) {
+                    continue;   // Odd - but not a big deal
+                }
+                SkDEBUGCODE(opList->validateTargetsSingleRenderTarget());
+                opList->prepareOps(&fFlushState);
+                if (!opList->executeOps(&fFlushState)) {
+                    continue;         // This is bad
+                }
+            }
+            renderTargetContexts.reset();
+        }
     }
+
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        fOpLists[i]->prepareOps(&fFlushState);
+    }
+
+#if 0
+    // Enable this to print out verbose GrOp information
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        SkDEBUGCODE(fOpLists[i]->dump();)
+    }
+#endif
 
     // Upload all data to the GPU
     fFlushState.preIssueDraws();
 
-    for (int i = 0; i < fDrawTargets.count(); ++i) {
-        fDrawTargets[i]->drawBatches(&fFlushState);
-    }
-
-    SkASSERT(fFlushState.lastFlushedToken() == fFlushState.currentToken());
-
-    for (int i = 0; i < fDrawTargets.count(); ++i) {
-        fDrawTargets[i]->reset();
-#ifdef ENABLE_MDB
-        fDrawTargets[i]->unref();
-#endif
-    }
-
-#ifndef ENABLE_MDB
-    // When MDB is disabled we keep reusing the same drawTarget
-    if (fDrawTargets.count()) {
-        SkASSERT(fDrawTargets.count() == 1);
-        // Clear out this flag so the topological sort's SkTTopoSort_CheckAllUnmarked check
-        // won't bark
-        fDrawTargets[0]->resetFlag(GrDrawTarget::kWasOutput_Flag);
-    }
-#else
-    fDrawTargets.reset();
-#endif
-
-    fFlushState.reset();
-}
-
-GrTextContext* GrDrawingManager::textContext(const SkSurfaceProps& props,
-                                             GrRenderTarget* rt) {
-    if (this->abandoned()) {
-        return nullptr;
-    }
-
-    SkASSERT(props.pixelGeometry() < kNumPixelGeometries);
-    bool useDIF = props.isUseDeviceIndependentFonts();
-
-    if (useDIF && fContext->caps()->shaderCaps()->pathRenderingSupport() &&
-        rt->isStencilBufferMultisampled()) {
-        GrStencilAttachment* sb = fContext->resourceProvider()->attachStencilAttachment(rt);
-        if (sb) {
-            if (!fNVPRTextContext) {
-                fNVPRTextContext = GrStencilAndCoverTextContext::Create(fContext, props);
-            }
-
-            return fNVPRTextContext;
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        if (fOpLists[i]->executeOps(&fFlushState)) {
+            flushed = true;
         }
     }
 
-    if (!fTextContexts[props.pixelGeometry()][useDIF]) {
-        fTextContexts[props.pixelGeometry()][useDIF] = GrAtlasTextContext::Create(fContext, props);
+    SkASSERT(fFlushState.nextDrawToken() == fFlushState.nextTokenToFlush());
+
+    for (int i = 0; i < fOpLists.count(); ++i) {
+        fOpLists[i]->reset();
     }
 
-    return fTextContexts[props.pixelGeometry()][useDIF];
+#ifndef ENABLE_MDB
+    // When MDB is disabled we keep reusing the same GrOpList
+    if (fOpLists.count()) {
+        SkASSERT(fOpLists.count() == 1);
+        // Clear out this flag so the topological sort's SkTTopoSort_CheckAllUnmarked check
+        // won't bark
+        fOpLists[0]->resetFlag(GrOpList::kWasOutput_Flag);
+    }
+#else
+    fOpLists.reset();
+#endif
+
+    fFlushState.reset();
+    // We always have to notify the cache when it requested a flush so it can reset its state.
+    if (flushed || type == GrResourceCache::FlushType::kCacheRequested) {
+        fContext->getResourceCache()->notifyFlushOccurred(type);
+    }
+    fFlushing = false;
 }
 
-GrDrawTarget* GrDrawingManager::newDrawTarget(GrRenderTarget* rt) {
+void GrDrawingManager::prepareSurfaceForExternalIO(GrSurfaceProxy* proxy) {
+    if (this->wasAbandoned()) {
+        return;
+    }
+    SkASSERT(proxy);
+
+    if (proxy->priv().hasPendingIO()) {
+        this->flush(proxy);
+    }
+
+    GrSurface* surface = proxy->instantiate(fContext->resourceProvider());
+    if (!surface) {
+        return;
+    }
+
+    if (fContext->getGpu() && surface->asRenderTarget()) {
+        fContext->getGpu()->resolveRenderTarget(surface->asRenderTarget());
+    }
+}
+
+void GrDrawingManager::addPreFlushCallbackObject(sk_sp<GrPreFlushCallbackObject> preFlushCBObject) {
+    fPreFlushCBObjects.push_back(preFlushCBObject);
+}
+
+sk_sp<GrRenderTargetOpList> GrDrawingManager::newRTOpList(sk_sp<GrRenderTargetProxy> rtp) {
     SkASSERT(fContext);
 
 #ifndef ENABLE_MDB
-    // When MDB is disabled we always just return the single drawTarget
-    if (fDrawTargets.count()) {
-        SkASSERT(fDrawTargets.count() == 1);
-        // In the non-MDB-world the same drawTarget gets reused for multiple render targets.
+    // When MDB is disabled we always just return the single GrOpList
+    if (fOpLists.count()) {
+        SkASSERT(fOpLists.count() == 1);
+        // In the non-MDB-world the same GrOpList gets reused for multiple render targets.
         // Update this pointer so all the asserts are happy
-        rt->setLastDrawTarget(fDrawTargets[0]);
+        rtp->setLastOpList(fOpLists[0].get());
         // DrawingManager gets the creation ref - this ref is for the caller
-        return SkRef(fDrawTargets[0]);
+
+        // TODO: although this is true right now it isn't cool
+        return sk_ref_sp((GrRenderTargetOpList*) fOpLists[0].get());
     }
 #endif
 
-    GrDrawTarget* dt = new GrDrawTarget(rt, fContext->getGpu(), fContext->resourceProvider(),
-                                        fOptionsForDrawTargets);
+    sk_sp<GrRenderTargetOpList> opList(new GrRenderTargetOpList(rtp,
+                                                                fContext->getGpu(),
+                                                                fContext->resourceProvider(),
+                                                                fContext->getAuditTrail(),
+                                                                fOptionsForOpLists));
+    SkASSERT(rtp->getLastOpList() == opList.get());
 
-    *fDrawTargets.append() = dt;
+    fOpLists.push_back() = opList;
 
-    // DrawingManager gets the creation ref - this ref is for the caller 
-    return SkRef(dt);
+    return opList;
+}
+
+sk_sp<GrTextureOpList> GrDrawingManager::newTextureOpList(sk_sp<GrTextureProxy> textureProxy) {
+    SkASSERT(fContext);
+
+    sk_sp<GrTextureOpList> opList(new GrTextureOpList(std::move(textureProxy), fContext->getGpu(),
+                                                      fContext->getAuditTrail()));
+
+#ifndef ENABLE_MDB
+    // When MDB is disabled we still create a new GrOpList, but don't store or ref it - we rely
+    // on the caller to immediately execute and free it.
+    return opList;
+#else
+    *fOpLists.append() = opList;
+
+    // Drawing manager gets the creation ref - this ref is for the caller
+    return opList;
+#endif
+}
+
+GrAtlasTextContext* GrDrawingManager::getAtlasTextContext() {
+    if (!fAtlasTextContext) {
+        fAtlasTextContext.reset(GrAtlasTextContext::Create());
+    }
+
+    return fAtlasTextContext.get();
 }
 
 /*
@@ -173,25 +271,91 @@ GrPathRenderer* GrDrawingManager::getPathRenderer(const GrPathRenderer::CanDrawP
                                                   GrPathRenderer::StencilSupport* stencilSupport) {
 
     if (!fPathRendererChain) {
-        fPathRendererChain = new GrPathRendererChain(fContext);
+        fPathRendererChain = new GrPathRendererChain(fContext, fOptionsForPathRendererChain);
     }
 
     GrPathRenderer* pr = fPathRendererChain->getPathRenderer(args, drawType, stencilSupport);
     if (!pr && allowSW) {
         if (!fSoftwarePathRenderer) {
-            fSoftwarePathRenderer = new GrSoftwarePathRenderer(fContext);
+            fSoftwarePathRenderer =
+                    new GrSoftwarePathRenderer(fContext->resourceProvider(),
+                                               fOptionsForPathRendererChain.fAllowPathMaskCaching);
         }
-        pr = fSoftwarePathRenderer;
+        if (fSoftwarePathRenderer->canDrawPath(args)) {
+            pr = fSoftwarePathRenderer;
+        }
     }
 
     return pr;
 }
 
-GrDrawContext* GrDrawingManager::drawContext(GrRenderTarget* rt,
-                                             const SkSurfaceProps* surfaceProps) {
-    if (this->abandoned()) {
+sk_sp<GrRenderTargetContext> GrDrawingManager::makeRenderTargetContext(
+                                                            sk_sp<GrSurfaceProxy> sProxy,
+                                                            sk_sp<SkColorSpace> colorSpace,
+                                                            const SkSurfaceProps* surfaceProps) {
+    if (this->wasAbandoned() || !sProxy->asRenderTargetProxy()) {
         return nullptr;
     }
 
-    return new GrDrawContext(this, rt, surfaceProps);
+    // SkSurface catches bad color space usage at creation. This check handles anything that slips
+    // by, including internal usage. We allow a null color space here, for read/write pixels and
+    // other special code paths. If a color space is provided, though, enforce all other rules.
+    if (colorSpace && !SkSurface_Gpu::Valid(fContext, sProxy->config(), colorSpace.get())) {
+        SkDEBUGFAIL("Invalid config and colorspace combination");
+        return nullptr;
+    }
+
+    sk_sp<GrRenderTargetProxy> rtp(sk_ref_sp(sProxy->asRenderTargetProxy()));
+
+    bool useDIF = false;
+    if (surfaceProps) {
+        useDIF = surfaceProps->isUseDeviceIndependentFonts();
+    }
+
+    if (useDIF && fContext->caps()->shaderCaps()->pathRenderingSupport() &&
+        rtp->isStencilBufferMultisampled()) {
+        // TODO: defer stencil buffer attachment for PathRenderingDrawContext
+        sk_sp<GrRenderTarget> rt(sk_ref_sp(rtp->instantiate(fContext->resourceProvider())));
+        if (!rt) {
+            return nullptr;
+        }
+        GrStencilAttachment* sb = fContext->resourceProvider()->attachStencilAttachment(rt.get());
+        if (sb) {
+            return sk_sp<GrRenderTargetContext>(new GrPathRenderingRenderTargetContext(
+                                                        fContext, this, std::move(rtp),
+                                                        std::move(colorSpace), surfaceProps,
+                                                        fContext->getAuditTrail(), fSingleOwner));
+        }
+    }
+
+    return sk_sp<GrRenderTargetContext>(new GrRenderTargetContext(fContext, this, std::move(rtp),
+                                                                  std::move(colorSpace),
+                                                                  surfaceProps,
+                                                                  fContext->getAuditTrail(),
+                                                                  fSingleOwner));
+}
+
+sk_sp<GrTextureContext> GrDrawingManager::makeTextureContext(sk_sp<GrSurfaceProxy> sProxy,
+                                                             sk_sp<SkColorSpace> colorSpace) {
+    if (this->wasAbandoned() || !sProxy->asTextureProxy()) {
+        return nullptr;
+    }
+
+    // SkSurface catches bad color space usage at creation. This check handles anything that slips
+    // by, including internal usage. We allow a null color space here, for read/write pixels and
+    // other special code paths. If a color space is provided, though, enforce all other rules.
+    if (colorSpace && !SkSurface_Gpu::Valid(fContext, sProxy->config(), colorSpace.get())) {
+        SkDEBUGFAIL("Invalid config and colorspace combination");
+        return nullptr;
+    }
+
+    // GrTextureRenderTargets should always be using GrRenderTargetContext
+    SkASSERT(!sProxy->asRenderTargetProxy());
+
+    sk_sp<GrTextureProxy> textureProxy(sk_ref_sp(sProxy->asTextureProxy()));
+
+    return sk_sp<GrTextureContext>(new GrTextureContext(fContext, this, std::move(textureProxy),
+                                                        std::move(colorSpace),
+                                                        fContext->getAuditTrail(),
+                                                        fSingleOwner));
 }

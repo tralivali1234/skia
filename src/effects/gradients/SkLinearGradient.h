@@ -26,16 +26,18 @@ struct Sk4fStorage {
 
 class SkLinearGradient : public SkGradientShaderBase {
 public:
-    SkLinearGradient(const SkPoint pts[2], const Descriptor&);
+    enum {
+        // Temp flag for testing the 4f impl.
+        kForce4fContext_PrivateFlag     = 1 << 7,
+    };
 
-    size_t contextSize() const override;
+    SkLinearGradient(const SkPoint pts[2], const Descriptor&);
 
     class LinearGradientContext : public SkGradientShaderBase::GradientShaderBaseContext {
     public:
         LinearGradientContext(const SkLinearGradient&, const ContextRec&);
 
         void shadeSpan(int x, int y, SkPMColor dstC[], int count) override;
-        void shadeSpan16(int x, int y, uint16_t dstC[], int count) override;
 
         struct Rec {
             Sk4fStorage fColor;
@@ -55,10 +57,7 @@ public:
 
     GradientType asAGradient(GradientInfo* info) const override;
 #if SK_SUPPORT_GPU
-    const GrFragmentProcessor* asFragmentProcessor(GrContext*,
-                                                   const SkMatrix& viewM,
-                                                   const SkMatrix*,
-                                                   SkFilterQuality) const override;
+    sk_sp<GrFragmentProcessor> asFragmentProcessor(const AsFPArgs&) const override;
 #endif
 
     SK_TO_STRING_OVERRIDE()
@@ -67,9 +66,16 @@ public:
 protected:
     SkLinearGradient(SkReadBuffer& buffer);
     void flatten(SkWriteBuffer& buffer) const override;
-    Context* onCreateContext(const ContextRec&, void* storage) const override;
+    Context* onMakeContext(const ContextRec&, SkArenaAlloc*) const override;
+
+    bool onAppendStages(SkRasterPipeline*, SkColorSpace*, SkArenaAlloc*,
+                        const SkMatrix&, const SkPaint&, const SkMatrix*) const override;
+
+    sk_sp<SkShader> onMakeColorSpace(SkColorSpaceXformer* xformer) const override;
 
 private:
+    class LinearGradient4fContext;
+
     friend class SkGradientShader;
     typedef SkGradientShaderBase INHERITED;
     const SkPoint fStart;

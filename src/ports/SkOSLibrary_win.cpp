@@ -1,4 +1,3 @@
-
 /*
  * Copyright 2015 Google Inc.
  *
@@ -9,14 +8,14 @@
 #if defined(SK_BUILD_FOR_WIN32)
 
 #include "SkOSLibrary.h"
-#include <windows.h>
+#include "SkLeanWindows.h"
 
 void* DynamicLoadLibrary(const char* libraryName) {
-    return LoadLibrary(libraryName);
+    return LoadLibraryA(libraryName);
 }
 
 void* GetProcedureAddress(void* library, const char* functionName) {
-    return ::GetProcAddress((HMODULE)library, functionName);
+    return reinterpret_cast<void*>(::GetProcAddress((HMODULE)library, functionName));
 }
 
 #endif//defined(SK_BUILD_FOR_WIN32)

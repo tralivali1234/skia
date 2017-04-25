@@ -13,13 +13,16 @@
 #include "SkImageInfo.h"
 #include "SkPixelSerializer.h"
 #include "SkRandom.h"
+#include "SkStream.h"
 #include "SkTDArray.h"
 #include "SkTypeface.h"
 
 class SkBitmap;
 class SkCanvas;
+class SkColorFilter;
 class SkPaint;
 class SkPath;
+class SkRRect;
 class SkShader;
 class SkTestFont;
 class SkTextBlobBuilder;
@@ -36,7 +39,7 @@ namespace sk_tool_utils {
     /**
      * Return a color emoji typeface if available.
      */
-    void emoji_typeface(SkAutoTUnref<SkTypeface>* );
+    sk_sp<SkTypeface> emoji_typeface();
 
     /**
      * If the platform supports color emoji, return sample text the emoji can render.
@@ -72,12 +75,12 @@ namespace sk_tool_utils {
      * Sets the paint to use a platform-independent text renderer
      */
     void set_portable_typeface(SkPaint* paint, const char* name = nullptr,
-                               SkTypeface::Style style = SkTypeface::kNormal);
+                               SkFontStyle style = SkFontStyle());
 
     /**
      * Returns a platform-independent text renderer.
      */
-    SkTypeface* create_portable_typeface(const char* name, SkTypeface::Style style);
+    sk_sp<SkTypeface> create_portable_typeface(const char* name, SkFontStyle style);
 
     /** Call to clean up portable font references. */
     void release_portable_typefaces();
@@ -89,10 +92,10 @@ namespace sk_tool_utils {
     void write_pixels(SkCanvas*, const SkBitmap&, int x, int y, SkColorType, SkAlphaType);
 
     // private to sk_tool_utils
-    SkTypeface* create_font(const char* name, SkTypeface::Style);
+    sk_sp<SkTypeface> create_font(const char* name, SkFontStyle);
 
     /** Returns a newly created CheckerboardShader. */
-    SkShader* create_checkerboard_shader(SkColor c1, SkColor c2, int size);
+    sk_sp<SkShader> create_checkerboard_shader(SkColor c1, SkColor c2, int size);
 
     /** Draw a checkerboard pattern in the current canvas, restricted to
         the current clip, using SkXfermode::kSrc_Mode. */
@@ -114,18 +117,6 @@ namespace sk_tool_utils {
     SkBitmap create_string_bitmap(int w, int h, SkColor c, int x, int y,
                                   int textSize, const char* str);
 
-    // Encodes to PNG, unless there is already encoded data, in which case that gets
-    // used.
-    class PngPixelSerializer : public SkPixelSerializer {
-    public:
-        bool onUseEncodedData(const void*, size_t) override { return true; }
-        SkData* onEncodePixels(const SkImageInfo& info, const void* pixels,
-                               size_t rowBytes) override {
-            return SkImageEncoder::EncodeData(info, pixels, rowBytes,
-                                              SkImageEncoder::kPNG_Type, 100);
-        }
-    };
-
     // A helper for inserting a drawtext call into a SkTextBlobBuilder
     void add_to_text_blob(SkTextBlobBuilder* builder, const char* text, const SkPaint& origPaint,
                           SkScalar x, SkScalar y);
@@ -141,6 +132,10 @@ namespace sk_tool_utils {
     // Return a blurred version of 'src'. This doesn't use a separable filter
     // so it is slow!
     SkBitmap slow_blur(const SkBitmap& src, float sigma);
+
+    SkRect compute_central_occluder(const SkRRect& rr);
+    SkRect compute_widest_occluder(const SkRRect& rr);
+    SkRect compute_tallest_occluder(const SkRRect& rr);
 
     // A helper object to test the topological sorting code (TopoSortBench.cpp & TopoSortTest.cpp)
     class TopoTestNode {
@@ -179,13 +174,13 @@ namespace sk_tool_utils {
         static void SetTempMark(TopoTestNode* node) { node->fTempMark = true; }
         static void ResetTempMark(TopoTestNode* node) { node->fTempMark = false; }
         static bool IsTempMarked(TopoTestNode* node) { return node->fTempMark; }
-        static void Output(TopoTestNode* node, int outputPos) { 
+        static void Output(TopoTestNode* node, int outputPos) {
             SkASSERT(-1 != outputPos);
-            node->fOutputPos = outputPos; 
+            node->fOutputPos = outputPos;
         }
         static bool WasOutput(TopoTestNode* node) { return (-1 != node->fOutputPos); }
         static int NumDependencies(TopoTestNode* node) { return node->fDependencies.count(); }
-        static TopoTestNode* Dependency(TopoTestNode* node, int index) { 
+        static TopoTestNode* Dependency(TopoTestNode* node, int index) {
             return node->fDependencies[index];
         }
 
@@ -231,6 +226,39 @@ namespace sk_tool_utils {
 
         SkTDArray<TopoTestNode*> fDependencies;
     };
+
+    template <typename T>
+    inline bool EncodeImageToFile(const char* path, const T& src, SkEncodedImageFormat f, int q) {
+        SkFILEWStream file(path);
+        return file.isValid() && SkEncodeImage(&file, src, f, q);
+    }
+
+    template <typename T>
+    inline sk_sp<SkData> EncodeImageToData(const T& src, SkEncodedImageFormat f, int q) {
+        SkDynamicMemoryWStream buf;
+        return SkEncodeImage(&buf, src , f, q) ? buf.detachAsData() : nullptr;
+    }
+
+    /**
+     * Uses SkEncodeImage to serialize images that are not already
+     * encoded as SkEncodedImageFormat::kPNG images.
+     */
+    inline sk_sp<SkPixelSerializer> MakePixelSerializer() {
+        struct EncodeImagePixelSerializer final : SkPixelSerializer {
+            bool onUseEncodedData(const void*, size_t) override { return true; }
+            SkData* onEncode(const SkPixmap& pmap) override {
+                return EncodeImageToData(pmap, SkEncodedImageFormat::kPNG, 100).release();
+            }
+        };
+        return sk_make_sp<EncodeImagePixelSerializer>();
+    }
+
+    void copy_to_g8(SkBitmap* dst, const SkBitmap& src);
+
+#if SK_SUPPORT_GPU
+    sk_sp<SkColorFilter> MakeLinearToSRGBColorFilter();
+    sk_sp<SkColorFilter> MakeSRGBToLinearColorFilter();
+#endif
 
 }  // namespace sk_tool_utils
 

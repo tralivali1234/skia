@@ -10,6 +10,7 @@
 #include "SkColorPriv.h"
 #include "SkGradientShader.h"
 #include "SkPath.h"
+#include "SkRegion.h"
 #include "SkUtils.h"
 #include "SkView.h"
 
@@ -26,11 +27,8 @@ static void draw_gradient(SkCanvas* canvas) {
     SkRect r = { 0, 0, SkIntToScalar(256), SkIntToScalar(32) };
     SkPoint pts[] = { { r.fLeft, r.fTop }, { r.fRight, r.fTop } };
     SkColor colors[] = { 0xFF000000, 0xFFFF0000 };
-    SkShader* s = SkGradientShader::CreateLinear(pts, colors, nullptr, 2,
-                                                 SkShader::kClamp_TileMode);
-
     SkPaint p;
-    p.setShader(s)->unref();
+    p.setShader(SkGradientShader::MakeLinear(pts, colors, nullptr, 2, SkShader::kClamp_TileMode));
     draw_rect(canvas, r, p);
 
     canvas->translate(0, SkIntToScalar(40));
@@ -58,21 +56,16 @@ static SkBitmap make_bitmap() {
     for (int i = 0; i < 256; i++) {
         c[i] = SkPackARGB32(0xFF, i, 0, 0);
     }
-    SkColorTable* ctable = new SkColorTable(c, 256);
-
     SkBitmap bm;
     bm.allocPixels(SkImageInfo::Make(256, 32, kIndex_8_SkColorType, kPremul_SkAlphaType),
-                   nullptr, ctable);
-    ctable->unref();
+                   SkColorTable::Make(c, 256));
 
-    bm.lockPixels();
     for (int y = 0; y < bm.height(); y++) {
         uint8_t* p = bm.getAddr8(0, y);
         for (int x = 0; x < 256; x++) {
             p[x] = x;
         }
     }
-    bm.unlockPixels();
     return bm;
 }
 
@@ -100,7 +93,6 @@ protected:
     }
 
     static void setBitmapOpaque(SkBitmap* bm, bool isOpaque) {
-        SkAutoLockPixels alp(*bm);  // needed for ctable
         bm->setAlphaType(isOpaque ? kOpaque_SkAlphaType : kPremul_SkAlphaType);
     }
 

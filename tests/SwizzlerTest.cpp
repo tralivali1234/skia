@@ -5,8 +5,10 @@
  * found in the LICENSE file.
  */
 
+#include "SkSwizzle.h"
 #include "SkSwizzler.h"
 #include "Test.h"
+#include "SkOpts.h"
 
 // These are the values that we will look for to indicate that the fill was successful
 static const uint8_t kFillIndex = 0x11;
@@ -30,7 +32,7 @@ static void check_fill(skiatest::Reporter* r,
     const size_t totalBytes = imageInfo.getSafeSize(rowBytes) + offset;
 
     // Create fake image data where every byte has a value of 0
-    SkAutoTDeleteArray<uint8_t> storage(new uint8_t[totalBytes]);
+    std::unique_ptr<uint8_t[]> storage(new uint8_t[totalBytes]);
     memset(storage.get(), 0, totalBytes);
     // Adjust the pointer in order to test on different memory alignments
     uint8_t* imageData = storage.get() + offset;
@@ -123,4 +125,45 @@ DEF_TEST(SwizzlerFill, r) {
             }
         }
     }
+}
+
+DEF_TEST(SwizzleOpts, r) {
+    uint32_t dst, src;
+
+    // forall c, c*255 == c, c*0 == 0
+    for (int c = 0; c <= 255; c++) {
+        src = (255<<24) | c;
+        SkOpts::RGBA_to_rgbA(&dst, &src, 1);
+        REPORTER_ASSERT(r, dst == src);
+        SkOpts::RGBA_to_bgrA(&dst, &src, 1);
+        REPORTER_ASSERT(r, dst == (uint32_t)((255<<24) | (c<<16)));
+
+        src = (0<<24) | c;
+        SkOpts::RGBA_to_rgbA(&dst, &src, 1);
+        REPORTER_ASSERT(r, dst == 0);
+        SkOpts::RGBA_to_bgrA(&dst, &src, 1);
+        REPORTER_ASSERT(r, dst == 0);
+    }
+
+    // check a totally arbitrary color
+    src = 0xFACEB004;
+    SkOpts::RGBA_to_rgbA(&dst, &src, 1);
+    REPORTER_ASSERT(r, dst == 0xFACAAD04);
+
+    // swap red and blue
+    SkOpts::RGBA_to_BGRA(&dst, &src, 1);
+    REPORTER_ASSERT(r, dst == 0xFA04B0CE);
+
+    // all together now
+    SkOpts::RGBA_to_bgrA(&dst, &src, 1);
+    REPORTER_ASSERT(r, dst == 0xFA04ADCA);
+}
+
+DEF_TEST(PublicSwizzleOpts, r) {
+    uint32_t dst, src;
+
+    // check a totally arbitrary color
+    src = 0xFACEB004;
+    SkSwapRB(&dst, &src, 1);
+    REPORTER_ASSERT(r, dst == 0xFA04B0CE);
 }
