@@ -8,7 +8,6 @@
 #include "gm.h"
 #include "sk_tool_utils.h"
 #include "SkGradientShader.h"
-#include "SkLinearGradient.h"
 
 namespace skiagm {
 
@@ -798,7 +797,6 @@ private:
     uint32_t fFlags;
 };
 DEF_GM( return new LinearGradientTinyGM(0); )
-DEF_GM( return new LinearGradientTinyGM(SkLinearGradient::kForce4fContext_PrivateFlag, "_4f"); )
 }
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
@@ -891,7 +889,7 @@ DEF_SIMPLE_GM(gradients_dup_color_stops, canvas, 704, 564) {
     }
 }
 
-static void draw_many_stops(SkCanvas* canvas, uint32_t flags) {
+static void draw_many_stops(SkCanvas* canvas) {
     const unsigned kStopCount = 200;
     const SkPoint pts[] = { {50, 50}, {450, 465}};
 
@@ -908,32 +906,217 @@ static void draw_many_stops(SkCanvas* canvas, uint32_t flags) {
 
     SkPaint p;
     p.setShader(SkGradientShader::MakeLinear(
-        pts, colors, nullptr, SK_ARRAY_COUNT(colors), SkShader::kClamp_TileMode, flags, nullptr));
+        pts, colors, nullptr, SK_ARRAY_COUNT(colors), SkShader::kClamp_TileMode));
 
     canvas->drawRect(SkRect::MakeXYWH(0, 0, 500, 500), p);
 }
 
 DEF_SIMPLE_GM(gradient_many_stops, canvas, 500, 500) {
-    draw_many_stops(canvas, 0);
+    draw_many_stops(canvas);
 }
 
-DEF_SIMPLE_GM(gradient_many_stops_4f, canvas, 500, 500) {
-    draw_many_stops(canvas, SkLinearGradient::kForce4fContext_PrivateFlag);
-}
-
-static void draw_subpixel_gradient(SkCanvas* canvas, uint32_t flags) {
+static void draw_subpixel_gradient(SkCanvas* canvas) {
     const SkPoint pts[] = { {50, 50}, {50.1f, 50.1f}};
     SkColor colors[] = { SK_ColorRED, SK_ColorGREEN, SK_ColorBLUE };
     SkPaint p;
     p.setShader(SkGradientShader::MakeLinear(
-        pts, colors, nullptr, SK_ARRAY_COUNT(colors), SkShader::kRepeat_TileMode, flags, nullptr));
+        pts, colors, nullptr, SK_ARRAY_COUNT(colors), SkShader::kRepeat_TileMode));
     canvas->drawRect(SkRect::MakeXYWH(0, 0, 500, 500), p);
 }
 
 DEF_SIMPLE_GM(gradient_subpixel, canvas, 500, 500) {
-    draw_subpixel_gradient(canvas, 0);
+    draw_subpixel_gradient(canvas);
 }
 
-DEF_SIMPLE_GM(gradient_subpixel_4f, canvas, 500, 500) {
-    draw_subpixel_gradient(canvas, SkLinearGradient::kForce4fContext_PrivateFlag);
+#include "SkPictureRecorder.h"
+
+static void draw_circle_shader(SkCanvas* canvas, SkScalar cx, SkScalar cy, SkScalar r,
+                               sk_sp<SkShader> (*shaderFunc)()) {
+    SkPaint p;
+    p.setAntiAlias(true);
+    p.setShader(shaderFunc());
+    canvas->drawCircle(cx, cy, r, p);
+
+    p.setShader(nullptr);
+    p.setColor(SK_ColorGRAY);
+    p.setStyle(SkPaint::kStroke_Style);
+    p.setStrokeWidth(2);
+    canvas->drawCircle(cx, cy, r, p);
+}
+
+DEF_SIMPLE_GM(fancy_gradients, canvas, 800, 300) {
+    draw_circle_shader(canvas, 150, 150, 100, []() -> sk_sp<SkShader> {
+        // Checkerboard using two linear gradients + picture shader.
+        SkScalar kTileSize = 80 / sqrtf(2);
+        SkColor colors1[] = { 0xff000000, 0xff000000,
+                              0xffffffff, 0xffffffff,
+                              0xff000000, 0xff000000 };
+        SkColor colors2[] = { 0xff000000, 0xff000000,
+                              0x00000000, 0x00000000,
+                              0xff000000, 0xff000000 };
+        SkScalar pos[] = { 0, .25f, .25f, .75f, .75f, 1 };
+        static_assert(SK_ARRAY_COUNT(colors1) == SK_ARRAY_COUNT(pos), "color/pos size mismatch");
+        static_assert(SK_ARRAY_COUNT(colors2) == SK_ARRAY_COUNT(pos), "color/pos size mismatch");
+
+        SkPictureRecorder recorder;
+        recorder.beginRecording(SkRect::MakeWH(kTileSize, kTileSize));
+
+        SkPaint p;
+
+        SkPoint pts1[] = { { 0, 0 }, { kTileSize, kTileSize }};
+        p.setShader(SkGradientShader::MakeLinear(pts1, colors1, pos, SK_ARRAY_COUNT(colors1),
+                                                 SkShader::kClamp_TileMode, 0, nullptr));
+        recorder.getRecordingCanvas()->drawPaint(p);
+
+        SkPoint pts2[] = { { 0, kTileSize }, { kTileSize, 0 }};
+        p.setShader(SkGradientShader::MakeLinear(pts2, colors2, pos, SK_ARRAY_COUNT(colors2),
+                                                 SkShader::kClamp_TileMode, 0, nullptr));
+        recorder.getRecordingCanvas()->drawPaint(p);
+
+        SkMatrix m = SkMatrix::I();
+        m.preRotate(45);
+        return SkShader::MakePictureShader(recorder.finishRecordingAsPicture(),
+                                           SkShader::kRepeat_TileMode,
+                                           SkShader::kRepeat_TileMode, &m, nullptr);
+    });
+
+    draw_circle_shader(canvas, 400, 150, 100, []() -> sk_sp<SkShader> {
+        // Checkerboard using a sweep gradient + picture shader.
+        SkScalar kTileSize = 80;
+        SkColor colors[] = { 0xff000000, 0xff000000,
+                             0xffffffff, 0xffffffff,
+                             0xff000000, 0xff000000,
+                             0xffffffff, 0xffffffff };
+        SkScalar pos[] = { 0, .25f, .25f, .5f, .5f, .75f, .75f, 1 };
+        static_assert(SK_ARRAY_COUNT(colors) == SK_ARRAY_COUNT(pos), "color/pos size mismatch");
+
+        SkPaint p;
+        p.setShader(SkGradientShader::MakeSweep(kTileSize / 2, kTileSize / 2,
+                                                colors, pos, SK_ARRAY_COUNT(colors), 0, nullptr));
+        SkPictureRecorder recorder;
+        recorder.beginRecording(SkRect::MakeWH(kTileSize, kTileSize))->drawPaint(p);
+
+        return SkShader::MakePictureShader(recorder.finishRecordingAsPicture(),
+                                           SkShader::kRepeat_TileMode,
+                                           SkShader::kRepeat_TileMode, nullptr, nullptr);
+    });
+
+    draw_circle_shader(canvas, 650, 150, 100, []() -> sk_sp<SkShader> {
+        // Dartboard using sweep + radial.
+        const SkColor a = 0xffffffff;
+        const SkColor b = 0xff000000;
+        SkColor colors[] = { a, a, b, b, a, a, b, b, a, a, b, b, a, a, b, b};
+        SkScalar pos[] = { 0, .125f, .125f, .25f, .25f, .375f, .375f, .5f, .5f,
+                           .625f, .625f, .75f, .75f, .875f, .875f, 1};
+        static_assert(SK_ARRAY_COUNT(colors) == SK_ARRAY_COUNT(pos), "color/pos size mismatch");
+
+        SkPoint center = { 650, 150 };
+        sk_sp<SkShader> sweep1 = SkGradientShader::MakeSweep(center.x(), center.y(), colors, pos,
+                                                             SK_ARRAY_COUNT(colors), 0, nullptr);
+        SkMatrix m = SkMatrix::I();
+        m.preRotate(22.5f, center.x(), center.y());
+        sk_sp<SkShader> sweep2 = SkGradientShader::MakeSweep(center.x(), center.y(), colors, pos,
+                                                             SK_ARRAY_COUNT(colors), 0, &m);
+
+        sk_sp<SkShader> sweep(SkShader::MakeComposeShader(sweep1, sweep2, SkBlendMode::kExclusion));
+
+        SkScalar radialPos[] = { 0, .02f, .02f, .04f, .04f, .08f, .08f, .16f, .16f, .31f, .31f,
+                                 .62f, .62f, 1, 1, 1 };
+        static_assert(SK_ARRAY_COUNT(colors) == SK_ARRAY_COUNT(radialPos),
+                      "color/pos size mismatch");
+
+        return SkShader::MakeComposeShader(sweep,
+                                           SkGradientShader::MakeRadial(center, 100, colors,
+                                                                        radialPos,
+                                                                        SK_ARRAY_COUNT(radialPos),
+                                                                        SkShader::kClamp_TileMode),
+                                           SkBlendMode::kExclusion);
+    });
+}
+
+DEF_SIMPLE_GM(sweep_tiling, canvas, 690, 512) {
+    static constexpr SkScalar size = 160;
+    static constexpr SkColor colors[] = { SK_ColorBLUE, SK_ColorYELLOW, SK_ColorGREEN };
+    static constexpr SkScalar   pos[] = { 0, .25f, .50f };
+    static_assert(SK_ARRAY_COUNT(colors) == SK_ARRAY_COUNT(pos), "size mismatch");
+
+    static constexpr SkShader::TileMode modes[] = { SkShader::kClamp_TileMode,
+                                                    SkShader::kRepeat_TileMode,
+                                                    SkShader::kMirror_TileMode };
+
+    static const struct {
+        SkScalar start, end;
+    } angles[] = {
+        { -330, -270 },
+        {   30,   90 },
+        {  390,  450 },
+        {  -30,  800 },
+    };
+
+    SkPaint p;
+    const SkRect r = SkRect::MakeWH(size, size);
+
+    for (auto mode : modes) {
+        {
+            SkAutoCanvasRestore acr(canvas, true);
+
+            for (auto angle : angles) {
+                p.setShader(SkGradientShader::MakeSweep(size / 2, size / 2, colors, pos,
+                                                        SK_ARRAY_COUNT(colors), mode,
+                                                        angle.start, angle.end, 0, nullptr));
+
+                canvas->drawRect(r, p);
+                canvas->translate(size * 1.1f, 0);
+            }
+        }
+        canvas->translate(0, size * 1.1f);
+    }
+}
+
+// Exercises the special-case Ganesh gradient effects.
+DEF_SIMPLE_GM(gradients_interesting, canvas, 640, 1300) {
+    static const SkColor colors2[] = { SK_ColorRED, SK_ColorBLUE };
+    static const SkColor colors3[] = { SK_ColorRED, SK_ColorYELLOW, SK_ColorBLUE };
+    static const SkColor colors4[] = { SK_ColorRED, SK_ColorYELLOW, SK_ColorYELLOW, SK_ColorBLUE };
+
+    static const SkScalar softRight[]  = { 0, .999f,   1 }; // Based on Android launcher "clipping"
+    static const SkScalar hardLeft[]   = { 0,     0,   1 };
+    static const SkScalar hardRight[]  = { 0,     1,   1 };
+    static const SkScalar hardCenter[] = { 0,   .5f, .5f, 1 };
+
+    static const struct {
+        const SkColor*  colors;
+        const SkScalar* pos;
+        int             count;
+    } configs[] = {
+        { colors2,    nullptr, 2 }, // kTwo_ColorType
+        { colors3,    nullptr, 3 }, // kThree_ColorType (simple)
+        { colors3,  softRight, 3 }, // kThree_ColorType (tricky)
+        { colors3,   hardLeft, 3 }, // kHardStopLeftEdged_ColorType
+        { colors3,  hardRight, 3 }, // kHardStopRightEdged_ColorType
+        { colors4, hardCenter, 4 }, // kSingleHardStop_ColorType
+    };
+
+    static const SkShader::TileMode modes[] = {
+        SkShader::kClamp_TileMode,
+        SkShader::kRepeat_TileMode,
+        SkShader::kMirror_TileMode,
+    };
+
+    static constexpr SkScalar size = 200;
+    static const SkPoint pts[] = { { size / 3, size / 3 }, { size * 2 / 3, size * 2 / 3} };
+
+    SkPaint p;
+    for (const auto& cfg : configs) {
+        {
+            SkAutoCanvasRestore acr(canvas, true);
+            for (auto mode : modes) {
+                p.setShader(SkGradientShader::MakeLinear(pts, cfg.colors, cfg.pos, cfg.count,
+                                                         mode));
+                canvas->drawRect(SkRect::MakeWH(size, size), p);
+                canvas->translate(size * 1.1f, 0);
+            }
+        }
+        canvas->translate(0, size * 1.1f);
+    }
 }

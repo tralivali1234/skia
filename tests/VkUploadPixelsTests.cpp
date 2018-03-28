@@ -9,12 +9,13 @@
 
 #include "SkTypes.h"
 
-#if SK_SUPPORT_GPU && SK_ALLOW_STATIC_GLOBAL_INITIALIZERS && defined(SK_VULKAN)
+#if SK_SUPPORT_GPU && defined(SK_VULKAN)
 
 #include "GrContextFactory.h"
 #include "GrContextPriv.h"
 #include "GrSurfaceProxy.h"
 #include "GrTest.h"
+#include "ProxyUtils.h"
 #include "SkGr.h"
 #include "Test.h"
 #include "vk/GrVkGpu.h"
@@ -51,8 +52,8 @@ bool does_full_buffer_contain_correct_color(GrColor* srcBuffer,
     return true;
 }
 
-void basic_texture_test(skiatest::Reporter* reporter, GrContext* context, GrPixelConfig config,
-                        bool renderTarget, bool linearTiling) {
+void basic_texture_test(skiatest::Reporter* reporter, GrContext* context, SkColorType ct,
+                        bool renderTarget) {
     const int kWidth = 16;
     const int kHeight = 16;
     SkAutoTMalloc<GrColor> srcBuffer(kWidth*kHeight);
@@ -60,43 +61,13 @@ void basic_texture_test(skiatest::Reporter* reporter, GrContext* context, GrPixe
 
     fill_pixel_data(kWidth, kHeight, srcBuffer.get());
 
-    const GrVkCaps* caps = reinterpret_cast<const GrVkCaps*>(context->caps());
-
-    bool canCreate = true;
-    // the expectation is that the given config is texturable/renderable with optimal tiling
-    // but may not be with linear tiling
-    if (linearTiling) {
-        if (!caps->isConfigTexturableLinearly(config) ||
-            (renderTarget && !caps->isConfigRenderableLinearly(config, false))) {
-            canCreate = false;
-        }
-    }
-
-    GrSurfaceDesc surfDesc;
-    surfDesc.fFlags = renderTarget ? kRenderTarget_GrSurfaceFlag : kNone_GrSurfaceFlags;
-    if (linearTiling) {
-        surfDesc.fFlags |= kZeroCopy_GrSurfaceFlag;
-    }
-    surfDesc.fOrigin = kTopLeft_GrSurfaceOrigin;
-    surfDesc.fWidth = kWidth;
-    surfDesc.fHeight = kHeight;
-    surfDesc.fConfig = config;
-    surfDesc.fSampleCnt = 0;
-
-    SkColorType ct;
-    SkAssertResult(GrPixelConfigToColorType(config, &ct));
-
-    sk_sp<GrTextureProxy> proxy = GrSurfaceProxy::MakeDeferred(context->resourceProvider(),
-                                                               surfDesc, SkBudgeted::kNo,
-                                                               srcBuffer, 0);
-
+    auto proxy = sk_gpu_test::MakeTextureProxyFromData(context, renderTarget, kWidth, kHeight, ct,
+                                                       kTopLeft_GrSurfaceOrigin, srcBuffer, 0);
+    REPORTER_ASSERT(reporter, proxy);
     if (proxy) {
-        REPORTER_ASSERT(reporter, canCreate);
+        sk_sp<GrSurfaceContext> sContext = context->contextPriv().makeWrappedSurfaceContext(proxy);
 
-        sk_sp<GrSurfaceContext> sContext = context->contextPriv().makeWrappedSurfaceContext(
-                                                                                proxy, nullptr);
-
-        SkImageInfo dstInfo = SkImageInfo::Make(kWidth, kHeight, ct, kOpaque_SkAlphaType);
+        SkImageInfo dstInfo = SkImageInfo::Make(kWidth, kHeight, ct, kPremul_SkAlphaType);
 
         bool result = sContext->readPixels(dstInfo, dstBuffer, 0, 0, 0);
         REPORTER_ASSERT(reporter, result);
@@ -105,7 +76,7 @@ void basic_texture_test(skiatest::Reporter* reporter, GrContext* context, GrPixe
                                                                          kWidth,
                                                                          kHeight));
 
-        dstInfo = SkImageInfo::Make(10, 2, ct, kOpaque_SkAlphaType);
+        dstInfo = SkImageInfo::Make(10, 2, ct, kPremul_SkAlphaType);
         result = sContext->writePixels(dstInfo, srcBuffer, 0, 2, 10);
         REPORTER_ASSERT(reporter, result);
 
@@ -118,22 +89,15 @@ void basic_texture_test(skiatest::Reporter* reporter, GrContext* context, GrPixe
                                                                          dstBuffer,
                                                                          10,
                                                                          2));
-    } else {
-        REPORTER_ASSERT(reporter, !canCreate);
     }
 
-    surfDesc.fOrigin = kBottomLeft_GrSurfaceOrigin;
-
-    proxy = GrSurfaceProxy::MakeDeferred(context->resourceProvider(),
-                                         surfDesc, SkBudgeted::kNo,
-                                         srcBuffer, 0);
+    proxy = sk_gpu_test::MakeTextureProxyFromData(context, renderTarget, kWidth, kHeight, ct,
+                                                  kBottomLeft_GrSurfaceOrigin, srcBuffer, 0);
+    REPORTER_ASSERT(reporter, proxy);
     if (proxy) {
-        REPORTER_ASSERT(reporter, canCreate);
+        sk_sp<GrSurfaceContext> sContext = context->contextPriv().makeWrappedSurfaceContext(proxy);
 
-        sk_sp<GrSurfaceContext> sContext = context->contextPriv().makeWrappedSurfaceContext(
-                                                                                proxy, nullptr);
-
-        SkImageInfo dstInfo = SkImageInfo::Make(kWidth, kHeight, ct, kOpaque_SkAlphaType);
+        SkImageInfo dstInfo = SkImageInfo::Make(kWidth, kHeight, ct, kPremul_SkAlphaType);
 
         bool result = sContext->readPixels(dstInfo, dstBuffer, 0, 0, 0);
         REPORTER_ASSERT(reporter, result);
@@ -142,7 +106,7 @@ void basic_texture_test(skiatest::Reporter* reporter, GrContext* context, GrPixe
                                                                          kWidth,
                                                                          kHeight));
 
-        dstInfo = SkImageInfo::Make(4, 5, ct, kOpaque_SkAlphaType);
+        dstInfo = SkImageInfo::Make(4, 5, ct, kPremul_SkAlphaType);
         result = sContext->writePixels(dstInfo, srcBuffer, 0, 5, 4);
         REPORTER_ASSERT(reporter, result);
 
@@ -156,23 +120,17 @@ void basic_texture_test(skiatest::Reporter* reporter, GrContext* context, GrPixe
                                                                          4,
                                                                          5));
 
-    } else {
-        REPORTER_ASSERT(reporter, !canCreate);
     }
 }
 
 DEF_GPUTEST_FOR_VULKAN_CONTEXT(VkUploadPixelsTests, reporter, ctxInfo) {
     // RGBA
-    basic_texture_test(reporter, ctxInfo.grContext(), kRGBA_8888_GrPixelConfig, false, false);
-    basic_texture_test(reporter, ctxInfo.grContext(), kRGBA_8888_GrPixelConfig, true, false);
-    basic_texture_test(reporter, ctxInfo.grContext(), kRGBA_8888_GrPixelConfig, false, true);
-    basic_texture_test(reporter, ctxInfo.grContext(), kRGBA_8888_GrPixelConfig, true, true);
+    basic_texture_test(reporter, ctxInfo.grContext(), kRGBA_8888_SkColorType, false);
+    basic_texture_test(reporter, ctxInfo.grContext(), kRGBA_8888_SkColorType, true);
 
     // BGRA
-    basic_texture_test(reporter, ctxInfo.grContext(), kBGRA_8888_GrPixelConfig, false, false);
-    basic_texture_test(reporter, ctxInfo.grContext(), kBGRA_8888_GrPixelConfig, true, false);
-    basic_texture_test(reporter, ctxInfo.grContext(), kBGRA_8888_GrPixelConfig, false, true);
-    basic_texture_test(reporter, ctxInfo.grContext(), kBGRA_8888_GrPixelConfig, true, true);
+    basic_texture_test(reporter, ctxInfo.grContext(), kBGRA_8888_SkColorType, false);
+    basic_texture_test(reporter, ctxInfo.grContext(), kBGRA_8888_SkColorType, true);
 }
 
 #endif

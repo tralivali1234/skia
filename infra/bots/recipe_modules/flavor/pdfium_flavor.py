@@ -17,11 +17,18 @@ class PDFiumFlavorUtils(default_flavor.DefaultFlavorUtils):
     pdfium_dir = self.m.vars.checkout_root.join('pdfium')
 
     # Runhook to generate the gn binary in buildtools.
-    with self.m.step.context({'cwd': pdfium_dir}):
+    with self.m.context(cwd=pdfium_dir):
+      # TODO(borenet): Remove this hack and replace with
+      # 'self.m.gclient.runhooks()' after the transition to Kitchen:
+      # https://bugs.chromium.org/p/skia/issues/detail?id=7050
+      depot_tools = self.m.vars.checkout_root.join('depot_tools')
+      self.m.git.checkout(
+          'https://chromium.googlesource.com/chromium/tools/depot_tools.git',
+          dir_path=depot_tools, ref='06493714339009216197d59c5413da2a1efdf4a2')
       self.m.run(
           self.m.step,
           'runhook',
-          cmd=['gclient', 'runhook', 'gn_linux64'])
+          cmd=[depot_tools.join('gclient'), 'runhook', 'gn_linux64'])
 
       # Install the sysroot.
       self.m.run(
@@ -43,9 +50,9 @@ class PDFiumFlavorUtils(default_flavor.DefaultFlavorUtils):
         gn_args.append('pdf_use_skia=true')
 
 
-      env = self.m.step.get_from_context('env', {})
+      env = self.m.context.env
       env['CHROMIUM_BUILDTOOLS_PATH'] = str(pdfium_dir.join('buildtools'))
-      with self.m.step.context({'env': env}):
+      with self.m.context(env=env):
         self.m.run(
             self.m.step,
             'gn_gen',

@@ -7,7 +7,7 @@
 
 #include "SkColorSpaceXform_A2B.h"
 
-#include "SkColorPriv.h"
+#include "SkColorData.h"
 #include "SkColorSpace_A2B.h"
 #include "SkColorSpace_XYZ.h"
 #include "SkColorSpacePriv.h"
@@ -18,22 +18,25 @@
 #include "SkTypes.h"
 #include "../jumper/SkJumper.h"
 
-bool SkColorSpaceXform_A2B::onApply(ColorFormat dstFormat, void* dst, ColorFormat srcFormat,
-                                    const void* src, int count, SkAlphaType alphaType) const {
-    SkRasterPipeline pipeline;
+bool SkColorSpaceXform_A2B::apply(ColorFormat dstFormat, void* dst, ColorFormat srcFormat,
+                                  const void* src, int count, SkAlphaType alphaType) const {
+    SkRasterPipeline_<256> pipeline;
+
+    SkJumper_MemoryCtx src_ctx = { (void*)src, 0 },
+                       dst_ctx = { (void*)dst, 0 };
+
     switch (srcFormat) {
         case kBGRA_8888_ColorFormat:
-            pipeline.append(SkRasterPipeline::load_8888, &src);
-            pipeline.append(SkRasterPipeline::swap_rb);
+            pipeline.append(SkRasterPipeline::load_bgra, &src_ctx);
             break;
         case kRGBA_8888_ColorFormat:
-            pipeline.append(SkRasterPipeline::load_8888, &src);
+            pipeline.append(SkRasterPipeline::load_8888, &src_ctx);
             break;
         case kRGBA_U16_BE_ColorFormat:
-            pipeline.append(SkRasterPipeline::load_u16_be, &src);
+            pipeline.append(SkRasterPipeline::load_u16_be, &src_ctx);
             break;
         case kRGB_U16_BE_ColorFormat:
-            pipeline.append(SkRasterPipeline::load_rgb_u16_be, &src);
+            pipeline.append(SkRasterPipeline::load_rgb_u16_be, &src_ctx);
             break;
         default:
             SkCSXformPrintf("F16/F32 sources must be linear.\n");
@@ -48,34 +51,33 @@ bool SkColorSpaceXform_A2B::onApply(ColorFormat dstFormat, void* dst, ColorForma
 
     switch (dstFormat) {
         case kBGRA_8888_ColorFormat:
-            pipeline.append(SkRasterPipeline::swap_rb);
-            pipeline.append(SkRasterPipeline::store_8888, &dst);
+            pipeline.append(SkRasterPipeline::store_bgra, &dst_ctx);
             break;
         case kRGBA_8888_ColorFormat:
-            pipeline.append(SkRasterPipeline::store_8888, &dst);
+            pipeline.append(SkRasterPipeline::store_8888, &dst_ctx);
             break;
         case kRGBA_F16_ColorFormat:
             if (!fLinearDstGamma) {
                 return false;
             }
-            pipeline.append(SkRasterPipeline::store_f16, &dst);
+            pipeline.append(SkRasterPipeline::store_f16, &dst_ctx);
             break;
         case kRGBA_F32_ColorFormat:
             if (!fLinearDstGamma) {
                 return false;
             }
-            pipeline.append(SkRasterPipeline::store_f32, &dst);
+            pipeline.append(SkRasterPipeline::store_f32, &dst_ctx);
             break;
         case kBGR_565_ColorFormat:
             if (kOpaque_SkAlphaType != alphaType) {
                 return false;
             }
-            pipeline.append(SkRasterPipeline::store_565, &dst);
+            pipeline.append(SkRasterPipeline::store_565, &dst_ctx);
             break;
         default:
             return false;
     }
-    pipeline.run(0,count);
+    pipeline.run(0,0, count,1);
 
     return true;
 }
@@ -98,7 +100,8 @@ static inline bool gamma_to_parametric(SkColorSpaceTransferFn* coeffs, const SkG
 
 SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
                                              SkColorSpace_XYZ* dstSpace)
-    : fLinearDstGamma(kLinear_SkGammaNamed == dstSpace->gammaNamed()) {
+    : fElementsPipeline(&fAlloc)
+    , fLinearDstGamma(kLinear_SkGammaNamed == dstSpace->gammaNamed()) {
 #if (SkCSXformPrintfDefined)
     static const char* debugGammaNamed[4] = {
         "Linear", "SRGB", "2.2", "NonStandard"
@@ -109,16 +112,16 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
 #endif
     int currentChannels;
     switch (srcSpace->iccType()) {
-        case SkColorSpace_Base::kRGB_ICCTypeFlag:
+        case SkColorSpace::kRGB_Type:
             currentChannels = 3;
             break;
-        case SkColorSpace_Base::kCMYK_ICCTypeFlag:
+        case SkColorSpace::kCMYK_Type: {
             currentChannels = 4;
             // CMYK images from JPEGs (the only format that supports it) are actually
             // inverted CMYK, so we need to invert every channel.
-            // TransferFn is y = -x + 1 for x < 1.f, otherwise 0x + 0, ie y = 1 - x for x in [0,1]
-            this->addTransferFns({1.f, 0.f, 0.f, -1.f, 1.f, 0.f, 1.f}, 4);
+            fElementsPipeline.append(SkRasterPipeline::invert);
             break;
+        }
         default:
             currentChannels = 0;
             SkASSERT(false);
@@ -129,30 +132,31 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
         SkASSERT(e.inputChannels() == currentChannels);
         currentChannels = e.outputChannels();
         switch (e.type()) {
-            case SkColorSpace_A2B::Element::Type::kGammaNamed:
+            case SkColorSpace_A2B::Element::Type::kGammaNamed: {
                 if (kLinear_SkGammaNamed == e.gammaNamed()) {
                     break;
                 }
 
-                // take the fast path for 3-channel named gammas
-                if (3 == currentChannels) {
-                    if (k2Dot2Curve_SkGammaNamed == e.gammaNamed()) {
-                        SkCSXformPrintf("fast path from 2.2\n");
-                        fElementsPipeline.append(SkRasterPipeline::from_2dot2);
-                        break;
-                    } else if (kSRGB_SkGammaNamed == e.gammaNamed()) {
-                        SkCSXformPrintf("fast path from sRGB\n");
-                        // Images should always start the pipeline as unpremul
-                        fElementsPipeline.append_from_srgb(kUnpremul_SkAlphaType);
-                        break;
-                    }
+                // Take the fast path for ordinary sRGB.
+                if (3 == currentChannels && kSRGB_SkGammaNamed == e.gammaNamed()) {
+                    SkCSXformPrintf("fast path from sRGB\n");
+                    fElementsPipeline.append(SkRasterPipeline::from_srgb);
+                    break;
                 }
 
                 SkCSXformPrintf("Gamma stage added: %s\n", debugGammaNamed[(int)e.gammaNamed()]);
-                SkColorSpaceTransferFn fn;
-                SkAssertResult(named_to_parametric(&fn, e.gammaNamed()));
-                this->addTransferFns(fn, currentChannels);
+                auto fn = fAlloc.make<SkColorSpaceTransferFn>();
+                SkAssertResult(named_to_parametric(fn, e.gammaNamed()));
+
+                if (is_just_gamma(*fn)) {
+                    fElementsPipeline.append(SkRasterPipeline::gamma, &fn->fG);
+                } else {
+                    fElementsPipeline.append(SkRasterPipeline::parametric_r, fn);
+                    fElementsPipeline.append(SkRasterPipeline::parametric_g, fn);
+                    fElementsPipeline.append(SkRasterPipeline::parametric_b, fn);
+                }
                 break;
+            }
             case SkColorSpace_A2B::Element::Type::kGammas: {
                 const SkGammas& gammas = e.gammas();
                 SkCSXformPrintf("Gamma stage added:");
@@ -168,8 +172,8 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
                                 gammas.data(channel).fTable.fSize,
                         };
 
+                        gammaNeedsRef |= !this->buildTableFn(&table);
                         this->addTableFn(table, channel);
-                        gammaNeedsRef = true;
                     } else {
                         SkColorSpaceTransferFn fn;
                         SkAssertResult(gamma_to_parametric(&fn, gammas, channel));
@@ -184,27 +188,24 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
             case SkColorSpace_A2B::Element::Type::kCLUT: {
                 SkCSXformPrintf("CLUT (%d -> %d) stage added\n", e.colorLUT().inputChannels(),
                                                                  e.colorLUT().outputChannels());
-                struct CallbackCtx : SkJumper_CallbackCtx {
-                    sk_sp<const SkColorLookUpTable> clut;
-                    // clut->interp() can't always safely alias its arguments,
-                    // so we allocate a second buffer to hold our results.
-                    float results[4*SkJumper_kMaxStride];
-                };
-                auto cb = fAlloc.make<CallbackCtx>();
-                cb->clut      = sk_ref_sp(&e.colorLUT());
-                cb->read_from = cb->results;
-                cb->fn        = [](SkJumper_CallbackCtx* ctx, int active_pixels) {
-                    auto c = (CallbackCtx*)ctx;
-                    for (int i = 0; i < active_pixels; i++) {
-                        // Look up red, green, and blue for this pixel using 3-4 values from rgba.
-                        c->clut->interp(c->results+4*i, c->rgba+4*i);
 
-                        // If we used 3 inputs (rgb) preserve the fourth as alpha.
-                        // If we used 4 inputs (cmyk) force alpha to 1.
-                        c->results[4*i+3] = (3 == c->clut->inputChannels()) ? c->rgba[4*i+3] : 1.0f;
-                    }
+                struct Ctx : SkJumper_ColorLookupTableCtx {
+                    sk_sp<const SkColorLookUpTable> clut;
                 };
-                fElementsPipeline.append(SkRasterPipeline::callback, cb);
+                auto ctx = fAlloc.make<Ctx>();
+                ctx->clut  = sk_ref_sp(&e.colorLUT());
+                ctx->table = ctx->clut->table();
+                for (int i = 0; i < ctx->clut->inputChannels(); i++) {
+                    ctx->limits[i] = ctx->clut->gridPoints(i);
+                }
+
+                switch  (e.colorLUT().inputChannels()) {
+                    case 3: fElementsPipeline.append(SkRasterPipeline::clut_3D, ctx); break;
+                    case 4: fElementsPipeline.append(SkRasterPipeline::clut_4D, ctx); break;
+                    default: SkDEBUGFAIL("need to handle 1 or 2 channel color lookup tables.");
+                }
+                fElementsPipeline.append(SkRasterPipeline::clamp_0);
+                fElementsPipeline.append(SkRasterPipeline::clamp_1);
                 break;
             }
             case SkColorSpace_A2B::Element::Type::kMatrix:
@@ -234,9 +235,10 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
         case kLinear_SkGammaNamed:
             // do nothing
             break;
-        case k2Dot2Curve_SkGammaNamed:
-            fElementsPipeline.append(SkRasterPipeline::to_2dot2);
+        case k2Dot2Curve_SkGammaNamed: {
+            fElementsPipeline.append(SkRasterPipeline::gamma, this->copy(1/2.2f));
             break;
+        }
         case kSRGB_SkGammaNamed:
             fElementsPipeline.append(SkRasterPipeline::to_srgb);
             break;
@@ -262,12 +264,6 @@ SkColorSpaceXform_A2B::SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace,
     }
 }
 
-void SkColorSpaceXform_A2B::addTransferFns(const SkColorSpaceTransferFn& fn, int channelCount) {
-    for (int i = 0; i < channelCount; ++i) {
-        this->addTransferFn(fn, i);
-    }
-}
-
 void SkColorSpaceXform_A2B::addTransferFn(const SkColorSpaceTransferFn& fn, int channelIndex) {
     switch (channelIndex) {
         case 0:
@@ -285,6 +281,33 @@ void SkColorSpaceXform_A2B::addTransferFn(const SkColorSpaceTransferFn& fn, int 
         default:
             SkASSERT(false);
     }
+}
+
+/**
+ *  |fn| is an in-out parameter.  If the table is too small to perform reasonable table-lookups
+ *  without interpolation, we will build a bigger table.
+ *
+ *  This returns false if we use the original table, meaning we do nothing here but need to keep
+ *  a reference to the original table.  This returns true if we build a new table and the original
+ *  table can be discarded.
+ */
+bool SkColorSpaceXform_A2B::buildTableFn(SkTableTransferFn* fn) {
+    // Arbitrary, but seems like a reasonable guess.
+    static constexpr int kMinTableSize = 256;
+
+    if (fn->fSize >= kMinTableSize) {
+        return false;
+    }
+
+    float* outTable = fAlloc.makeArray<float>(kMinTableSize);
+    float step = 1.0f / (kMinTableSize - 1);
+    for (int i = 0; i < kMinTableSize; i++) {
+        outTable[i] = interp_lut(i * step, fn->fData, fn->fSize);
+    }
+
+    fn->fData = outTable;
+    fn->fSize = kMinTableSize;
+    return true;
 }
 
 void SkColorSpaceXform_A2B::addTableFn(const SkTableTransferFn& fn, int channelIndex) {

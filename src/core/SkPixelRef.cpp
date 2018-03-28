@@ -26,39 +26,19 @@ uint32_t SkNextID::ImageID() {
 
 ///////////////////////////////////////////////////////////////////////////////
 
-static SkImageInfo validate_info(const SkImageInfo& info) {
-    SkAlphaType newAlphaType = info.alphaType();
-    SkAssertResult(SkColorTypeValidateAlphaType(info.colorType(), info.alphaType(), &newAlphaType));
-    return info.makeAlphaType(newAlphaType);
-}
-
-static void validate_pixels_ctable(const SkImageInfo& info, const SkColorTable* ctable) {
-    if (info.isEmpty()) {
-        return; // can't require ctable if the dimensions are empty
-    }
-    if (kIndex_8_SkColorType == info.colorType()) {
-        SkASSERT(ctable);
-    } else {
-        SkASSERT(nullptr == ctable);
-    }
-}
-
 #ifdef SK_TRACE_PIXELREF_LIFETIME
     static int32_t gInstCounter;
 #endif
 
-SkPixelRef::SkPixelRef(const SkImageInfo& info, void* pixels, size_t rowBytes,
-                       sk_sp<SkColorTable> ctable)
-    : fInfo(validate_info(info))
-    , fCTable(std::move(ctable))
+SkPixelRef::SkPixelRef(int width, int height, void* pixels, size_t rowBytes)
+    : fWidth(width)
+    , fHeight(height)
     , fPixels(pixels)
     , fRowBytes(rowBytes)
 #ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
     , fStableID(SkNextID::ImageID())
 #endif
 {
-    validate_pixels_ctable(fInfo, fCTable.get());
-    SkASSERT(rowBytes >= info.minRowBytes());
 #ifdef SK_TRACE_PIXELREF_LIFETIME
     SkDebugf(" pixelref %d\n", sk_atomic_inc(&gInstCounter));
 #endif
@@ -75,39 +55,20 @@ SkPixelRef::~SkPixelRef() {
     this->callGenIDChangeListeners();
 }
 
-#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
 // This is undefined if there are clients in-flight trying to use us
-void SkPixelRef::android_only_reset(const SkImageInfo& info, size_t rowBytes,
-                                    sk_sp<SkColorTable> ctable) {
-    validate_pixels_ctable(info, ctable.get());
-
-    *const_cast<SkImageInfo*>(&fInfo) = info;
+void SkPixelRef::android_only_reset(int width, int height, size_t rowBytes) {
+    fWidth = width;
+    fHeight = height;
     fRowBytes = rowBytes;
-    fCTable = std::move(ctable);
     // note: we do not change fPixels
 
     // conservative, since its possible the "new" settings are the same as the old.
     this->notifyPixelsChanged();
 }
-#endif
 
 void SkPixelRef::needsNewGenID() {
     fTaggedGenID.store(0);
     SkASSERT(!this->genIDIsUnique()); // This method isn't threadsafe, so the assert should be fine.
-}
-
-void SkPixelRef::cloneGenID(const SkPixelRef& that) {
-    // This is subtle.  We must call that.getGenerationID() to make sure its genID isn't 0.
-    uint32_t genID = that.getGenerationID();
-
-    // Neither ID is unique any more.
-    // (These & ~1u are actually redundant.  that.getGenerationID() just did it for us.)
-    this->fTaggedGenID.store(genID & ~1u);
-    that. fTaggedGenID.store(genID & ~1u);
-
-    // This method isn't threadsafe, so these asserts should be fine.
-    SkASSERT(!this->genIDIsUnique());
-    SkASSERT(!that. genIDIsUnique());
 }
 
 uint32_t SkPixelRef::getGenerationID() const {
@@ -163,10 +124,6 @@ void SkPixelRef::notifyPixelsChanged() {
     this->onNotifyPixelsChanged();
 }
 
-void SkPixelRef::changeAlphaType(SkAlphaType at) {
-    *const_cast<SkImageInfo*>(&fInfo) = fInfo.makeAlphaType(at);
-}
-
 void SkPixelRef::setImmutable() {
     fMutability = kImmutable;
 }
@@ -193,7 +150,3 @@ void SkPixelRef::restoreMutability() {
 }
 
 void SkPixelRef::onNotifyPixelsChanged() { }
-
-size_t SkPixelRef::getAllocatedSizeInBytes() const {
-    return 0;
-}

@@ -11,6 +11,7 @@
 #include "SkImage.h"
 #include "SkImageFilter.h"
 #include "SkSurface.h"
+#include "sk_tool_utils.h"
 
 /**
  *  Test drawing a primitive w/ an imagefilter (in this case, just matrix w/ identity) to see
@@ -69,10 +70,7 @@ DEF_SIMPLE_GM(imagefilters_xfermodes, canvas, 480, 480) {
 
 static sk_sp<SkImage> make_image(SkCanvas* canvas) {
     const SkImageInfo info = SkImageInfo::MakeS32(100, 100, kPremul_SkAlphaType);
-    auto surface(canvas->makeSurface(info));
-    if (!surface) {
-        surface = SkSurface::MakeRaster(info);
-    }
+    auto surface(sk_tool_utils::makeSurface(canvas, info));
     surface->getCanvas()->drawRect(SkRect::MakeXYWH(25, 25, 50, 50), SkPaint());
     return surface->makeImageSnapshot();
 }
@@ -123,7 +121,7 @@ static void draw_set(SkCanvas* canvas, sk_sp<SkImageFilter> filters[], int count
         canvas->save();
         SkRRect rr = SkRRect::MakeRectXY(r.makeOffset(dx, dy), 20, 20);
         canvas->clipRRect(rr, true);
-        canvas->saveLayer({ &rr.getBounds(), nullptr, filters[i].get(), 0 });
+        canvas->saveLayer({ &rr.getBounds(), nullptr, filters[i].get(), nullptr, nullptr, 0 });
         canvas->drawColor(0x40FFFFFF);
         canvas->restore();
         canvas->restore();
@@ -163,7 +161,7 @@ DEF_SIMPLE_GM(savelayer_with_backdrop, canvas, 830, 550) {
 
     SkPaint paint;
     paint.setFilterQuality(kMedium_SkFilterQuality);
-    sk_sp<SkImage> image(GetResourceAsImage("mandrill_512.png"));
+    sk_sp<SkImage> image(GetResourceAsImage("images/mandrill_512.png"));
 
     canvas->translate(20, 20);
     for (const auto& xform : xforms) {

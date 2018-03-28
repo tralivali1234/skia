@@ -62,9 +62,16 @@ struct SkPackedID {
     bool operator!=(const SkPackedID& that) const {
         return !(*this == that);
     }
+    bool operator<(SkPackedID that) const {
+        return this->fID < that.fID;
+    }
 
     uint32_t code() const {
         return fID & kCodeMask;
+    }
+
+    uint32_t getPackedID() const {
+        return fID;
     }
 
     SkFixed getSubXFixed() const {
@@ -155,58 +162,12 @@ public:
     int8_t      fRsbDelta, fLsbDelta;  // used by auto-kerning
     int8_t      fForceBW;
 
-    void initWithGlyphID(SkPackedGlyphID glyph_id) {
-        fID             = glyph_id;
-        fImage          = nullptr;
-        fPathData       = nullptr;
-        fMaskFormat     = MASK_FORMAT_UNKNOWN;
-        fForceBW        = 0;
-    }
+    void initWithGlyphID(SkPackedGlyphID glyph_id);
 
-    static size_t BitsToBytes(size_t bits) {
-        return (bits + 7) >> 3;
-    }
+    size_t allocImage(SkArenaAlloc* alloc);
 
-    /**
-     *  Compute the rowbytes for the specified width and mask-format.
-     */
-    static unsigned ComputeRowBytes(unsigned width, SkMask::Format format) {
-        unsigned rb = width;
-        if (SkMask::kBW_Format == format) {
-            rb = BitsToBytes(rb);
-        } else if (SkMask::kARGB32_Format == format) {
-            rb <<= 2;
-        } else if (SkMask::kLCD16_Format == format) {
-            rb = SkAlign4(rb << 1);
-        } else {
-            rb = SkAlign4(rb);
-        }
-        return rb;
-    }
-
-    size_t allocImage(SkArenaAlloc* alloc) {
-        size_t allocSize;
-        if (SkMask::kBW_Format == fMaskFormat) {
-            allocSize = BitsToBytes(fWidth) * fHeight;
-            fImage = alloc->makeArrayDefault<char>(allocSize);
-        } else if (SkMask::kARGB32_Format == fMaskFormat) {
-            allocSize = fWidth * fHeight;
-            fImage = alloc->makeArrayDefault<uint32_t>(fWidth * fHeight);
-            allocSize *= sizeof(uint32_t);
-        } else if (SkMask::kLCD16_Format == fMaskFormat) {
-            allocSize = SkAlign2(fWidth) * fHeight;
-            fImage = alloc->makeArrayDefault<uint16_t>(allocSize);
-            allocSize *= sizeof(uint16_t);
-        } else {
-            allocSize = SkAlign4(fWidth) * fHeight;
-            fImage = alloc->makeArrayDefault<char>(allocSize);
-        }
-        return allocSize;
-    }
-
-    unsigned rowBytes() const {
-        return ComputeRowBytes(fWidth, (SkMask::Format)fMaskFormat);
-    }
+    size_t rowBytes() const;
+    size_t rowBytesUsingFormat(SkMask::Format format) const;
 
     bool isJustAdvance() const {
         return MASK_FORMAT_JUST_ADVANCE == fMaskFormat;

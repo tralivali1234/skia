@@ -10,6 +10,7 @@
 #include "SkCanvas.h"
 #include "SkColorFilter.h"
 #include "SkColorPriv.h"
+#include "SkImageFilterPriv.h"
 #include "SkShader.h"
 
 #include "SkBlurImageFilter.h"
@@ -155,7 +156,7 @@ static void draw_text(SkCanvas* canvas, const SkRect& r, sk_sp<SkImageFilter> im
     sk_tool_utils::set_portable_typeface(&paint);
     paint.setTextSize(r.height()/2);
     paint.setTextAlign(SkPaint::kCenter_Align);
-    canvas->drawText("Text", 4, r.centerX(), r.centerY(), paint);
+    canvas->drawString("Text", r.centerX(), r.centerY(), paint);
 }
 
 static void draw_bitmap(SkCanvas* canvas, const SkRect& r, sk_sp<SkImageFilter> imf) {
@@ -207,7 +208,10 @@ protected:
             IdentityImageFilter::Make(nullptr),
             FailImageFilter::Make(),
             SkColorFilterImageFilter::Make(std::move(cf), nullptr),
-            SkBlurImageFilter::Make(12.0f, 0.0f, nullptr),
+            // The strage 0.29 value tickles an edge case where crop rect calculates
+            // a small border, but the blur really needs no border. This tickels
+            // an msan uninitialized value bug.
+            SkBlurImageFilter::Make(12.0f, 0.29f, nullptr),
             SkDropShadowImageFilter::Make(
                                     10.0f, 5.0f, 3.0f, 3.0f, SK_ColorBLUE,
                                     SkDropShadowImageFilter::kDrawShadowAndForeground_ShadowMode,
@@ -271,7 +275,7 @@ protected:
         SkAutoCanvasRestore acr(canvas, true);
         for (size_t i = 0; i < SK_ARRAY_COUNT(flags); ++i) {
             paint.setFlags(flags[i]);
-            canvas->drawText("Hamburgefons", 11, 0, 0, paint);
+            canvas->drawString("Hamburgefon", 0, 0, paint);
             canvas->translate(0, 40);
         }
     }

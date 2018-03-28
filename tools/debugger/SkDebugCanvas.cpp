@@ -10,6 +10,7 @@
 #include "SkDebugCanvas.h"
 #include "SkDrawCommand.h"
 #include "SkPaintFilterCanvas.h"
+#include "SkRectPriv.h"
 #include "SkTextBlob.h"
 #include "SkClipOpPriv.h"
 
@@ -58,17 +59,6 @@ protected:
         this->SkCanvas::onDrawPicture(picture, matrix, paint);
     }
 
-    void onDrawShadowedPicture(const SkPicture* picture,
-                               const SkMatrix* matrix,
-                               const SkPaint* paint,
-                               const SkShadowParams& params) {
-#ifdef SK_EXPERIMENTAL_SHADOWING
-        this->SkCanvas::onDrawShadowedPicture(picture, matrix, paint, params);
-#else
-        this->SkCanvas::onDrawPicture(picture, matrix, paint);
-#endif
-    }
-
 private:
     bool fOverdrawViz;
     bool fOverrideFilterQuality;
@@ -98,7 +88,7 @@ SkDebugCanvas::SkDebugCanvas(int width, int height)
     // rounded out. The following code creates a nearly maximal rect that will
     // not get collapsed by the coming conversions (Due to precision loss the
     // inset has to be surprisingly large).
-    SkIRect largeIRect = SkIRect::MakeLargest();
+    SkIRect largeIRect = SkRectPriv::MakeILarge();
     largeIRect.inset(1024, 1024);
     SkRect large = SkRect::Make(largeIRect);
 #ifdef SK_DEBUG
@@ -262,10 +252,10 @@ void SkDebugCanvas::drawTo(SkCanvas* originalCanvas, int index, int m) {
         const SkClipStack::Element* element;
         SkPath devPath;
         while ((element = iter.next())) {
-            SkClipStack::Element::Type type = element->getType();
+            SkClipStack::Element::DeviceSpaceType type = element->getDeviceSpaceType();
             SkPath operand;
-            if (type != SkClipStack::Element::kEmpty_Type) {
-               element->asPath(&operand);
+            if (type != SkClipStack::Element::DeviceSpaceType::kEmpty) {
+                element->asDeviceSpacePath(&operand);
             }
             SkClipOp elementOp = element->getOp();
             this->addClipStackData(devPath, operand, elementOp);
@@ -298,7 +288,7 @@ void SkDebugCanvas::drawTo(SkCanvas* originalCanvas, int index, int m) {
         // drawn offscreen
         GrRenderTargetContext* rtc =
                 originalCanvas->internal_private_accessTopLayerRenderTargetContext();
-        GrGpuResource::UniqueID rtID = rtc->accessRenderTarget()->uniqueID();
+        GrSurfaceProxy::UniqueID proxyID = rtc->asSurfaceProxy()->uniqueID();
 
         // get the bounding boxes to draw
         SkTArray<GrAuditTrail::OpInfo> childrenBounds;
@@ -312,8 +302,7 @@ void SkDebugCanvas::drawTo(SkCanvas* originalCanvas, int index, int m) {
         paint.setStyle(SkPaint::kStroke_Style);
         paint.setStrokeWidth(1);
         for (int i = 0; i < childrenBounds.count(); i++) {
-            SkASSERT(childrenBounds[i].sameDecision(rtID, rtc->asSurfaceProxy()->uniqueID()));
-            if (childrenBounds[i].fResourceUniqueID != rtID) {
+            if (childrenBounds[i].fProxyUniqueID != proxyID) {
                 // offscreen draw, ignore for now
                 continue;
             }
@@ -374,7 +363,7 @@ GrAuditTrail* SkDebugCanvas::getAuditTrail(SkCanvas* canvas) {
 #if SK_SUPPORT_GPU
     GrContext* ctx = canvas->getGrContext();
     if (ctx) {
-        at = ctx->getAuditTrail();
+        at = ctx->contextPriv().getAuditTrail();
     }
 #endif
     return at;
@@ -520,6 +509,11 @@ void SkDebugCanvas::onDrawImageRect(const SkImage* image, const SkRect* src, con
     this->addDrawCommand(new SkDrawImageRectCommand(image, src, dst, paint, constraint));
 }
 
+void SkDebugCanvas::onDrawImageNine(const SkImage* image, const SkIRect& center,
+                                    const SkRect& dst, const SkPaint* paint) {
+    this->addDrawCommand(new SkDrawImageNineCommand(image, center, dst, paint));
+}
+
 void SkDebugCanvas::onDrawOval(const SkRect& oval, const SkPaint& paint) {
     this->addDrawCommand(new SkDrawOvalCommand(oval, paint));
 }
@@ -537,6 +531,10 @@ void SkDebugCanvas::onDrawPath(const SkPath& path, const SkPaint& paint) {
     this->addDrawCommand(new SkDrawPathCommand(path, paint));
 }
 
+void SkDebugCanvas::onDrawRegion(const SkRegion& region, const SkPaint& paint) {
+    this->addDrawCommand(new SkDrawRegionCommand(region, paint));
+}
+
 void SkDebugCanvas::onDrawPicture(const SkPicture* picture,
                                   const SkMatrix* matrix,
                                   const SkPaint* paint) {
@@ -544,16 +542,6 @@ void SkDebugCanvas::onDrawPicture(const SkPicture* picture,
     SkAutoCanvasMatrixPaint acmp(this, matrix, paint, picture->cullRect());
     picture->playback(this);
     this->addDrawCommand(new SkEndDrawPictureCommand(SkToBool(matrix) || SkToBool(paint)));
-}
-
-void SkDebugCanvas::onDrawShadowedPicture(const SkPicture* picture,
-                                          const SkMatrix* matrix,
-                                          const SkPaint* paint,
-                                          const SkShadowParams& params) {
-    this->addDrawCommand(new SkBeginDrawShadowedPictureCommand(picture, matrix, paint, params));
-    SkAutoCanvasMatrixPaint acmp(this, matrix, paint, picture->cullRect());
-    picture->playback(this);
-    this->addDrawCommand(new SkEndDrawShadowedPictureCommand(SkToBool(matrix) || SkToBool(paint)));
 }
 
 void SkDebugCanvas::onDrawPoints(PointMode mode, size_t count,
@@ -640,13 +628,6 @@ SkCanvas::SaveLayerStrategy SkDebugCanvas::getSaveLayerStrategy(const SaveLayerR
 void SkDebugCanvas::didSetMatrix(const SkMatrix& matrix) {
     this->addDrawCommand(new SkSetMatrixCommand(matrix));
     this->INHERITED::didSetMatrix(matrix);
-}
-
-void SkDebugCanvas::didTranslateZ(SkScalar z) {
-#ifdef SK_EXPERIMENTAL_SHADOWING
-    this->addDrawCommand(new SkTranslateZCommand(z));
-    this->INHERITED::didTranslateZ(z);
-#endif
 }
 
 void SkDebugCanvas::toggleCommand(int index, bool toggle) {

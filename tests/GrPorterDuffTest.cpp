@@ -13,7 +13,7 @@
 #include "GrContextOptions.h"
 #include "GrContextPriv.h"
 #include "GrGpu.h"
-#include "GrResourceProvider.h"
+#include "GrProxyProvider.h"
 #include "GrTest.h"
 #include "GrXferProcessor.h"
 #include "effects/GrPorterDuffXferProcessor.h"
@@ -30,9 +30,9 @@ static void test_lcd_coverage(skiatest::Reporter* reporter, const GrCaps& caps);
 static void test_lcd_coverage_fallback_case(skiatest::Reporter* reporter, const GrCaps& caps);
 
 DEF_GPUTEST_FOR_NULLGL_CONTEXT(GrPorterDuff, reporter, ctxInfo) {
-    const GrCaps& caps = *ctxInfo.grContext()->getGpu()->caps();
+    const GrCaps& caps = *ctxInfo.grContext()->contextPriv().getGpu()->caps();
     if (!caps.shaderCaps()->dualSourceBlendingSupport()) {
-        SkFAIL("Null context does not support dual source blending.");
+        SK_ABORT("Null context does not support dual source blending.");
         return;
     }
 
@@ -56,6 +56,7 @@ enum {
     kISAModulate_OutputType,
     kISCModulate_OutputType
 };
+static const int kInvalid_OutputType = -1;
 
 static GrProcessorSet::Analysis do_analysis(const GrXPFactory* xpf,
                                             const GrProcessorAnalysisColor& colorInput,
@@ -66,7 +67,8 @@ static GrProcessorSet::Analysis do_analysis(const GrXPFactory* xpf,
     GrProcessorSet procs(std::move(paint));
     GrColor overrideColor;
     GrProcessorSet::Analysis analysis =
-            procs.finalize(colorInput, coverageInput, nullptr, false, caps, &overrideColor);
+            procs.finalize(colorInput, coverageInput, nullptr, false, caps,
+                           GrPixelConfigIsClamped::kYes, &overrideColor);
     return analysis;
 }
 
@@ -77,16 +79,25 @@ public:
                GrProcessorAnalysisColor inputColor, GrProcessorAnalysisCoverage inputCoverage) {
             const GrXPFactory* xpf = GrPorterDuffXPFactory::Get(xfermode);
 
+            bool isLCD = GrProcessorAnalysisCoverage::kLCD == inputCoverage;
+
             GrProcessorSet::Analysis analysis = do_analysis(xpf, inputColor, inputCoverage, caps);
             fCompatibleWithCoverageAsAlpha = analysis.isCompatibleWithCoverageAsAlpha();
             fCanCombineOverlappedStencilAndCover = analysis.canCombineOverlappedStencilAndCover();
             fIgnoresInputColor = analysis.inputColorIsIgnored();
             sk_sp<const GrXferProcessor> xp(
-                    GrXPFactory::MakeXferProcessor(xpf, inputColor, inputCoverage, false, caps));
-            TEST_ASSERT(!analysis.requiresDstTexture());
+                    GrXPFactory::MakeXferProcessor(xpf, inputColor, inputCoverage, false, caps,
+                                                   GrPixelConfigIsClamped::kYes));
+            TEST_ASSERT(!analysis.requiresDstTexture() ||
+                        (isLCD &&
+                         !caps.shaderCaps()->dstReadInShaderSupport() &&
+                         (SkBlendMode::kSrcOver != xfermode ||
+                          !inputColor.isOpaque())));
             GetXPOutputTypes(xp.get(), &fPrimaryOutputType, &fSecondaryOutputType);
             xp->getBlendInfo(&fBlendInfo);
-            TEST_ASSERT(!xp->willReadDstColor());
+            TEST_ASSERT(!xp->willReadDstColor() ||
+                        (isLCD && (SkBlendMode::kSrcOver != xfermode ||
+                                   !inputColor.isOpaque())));
             TEST_ASSERT(xp->hasSecondaryOutput() == GrBlendCoeffRefsSrc2(fBlendInfo.fDstBlend));
         }
 
@@ -104,7 +115,7 @@ public:
 };
 
 static void test_lcd_coverage(skiatest::Reporter* reporter, const GrCaps& caps) {
-    GrProcessorAnalysisColor inputColor = GrProcessorAnalysisColor::Opaque::kNo;
+    GrProcessorAnalysisColor inputColor = GrProcessorAnalysisColor::Opaque::kYes;
     GrProcessorAnalysisCoverage inputCoverage = GrProcessorAnalysisCoverage::kLCD;
 
     for (int m = 0; m <= (int)SkBlendMode::kLastCoeffMode; m++) {
@@ -115,34 +126,34 @@ static void test_lcd_coverage(skiatest::Reporter* reporter, const GrCaps& caps) 
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kCoverage_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
-                TEST_ASSERT(kReverseSubtract_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kDC_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kSrc:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kCoverage_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
                 TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kIS2C_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kDst:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kNone_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
-                TEST_ASSERT(!xpi.fBlendInfo.fWriteColor);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kSrcOver:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
@@ -159,121 +170,121 @@ static void test_lcd_coverage(skiatest::Reporter* reporter, const GrCaps& caps) 
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kIDA_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kSrcIn:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kCoverage_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kDA_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kIS2C_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kDstIn:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kISAModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
-                TEST_ASSERT(kReverseSubtract_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kDC_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kSrcOut:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kCoverage_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kIDA_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kIS2C_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kDstOut:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kSAModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kISC_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kSrcATop:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kSAModulate_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kDA_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kIS2C_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kDstATop:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kISAModulate_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kIDA_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kIS2C_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kXor:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kSAModulate_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kIDA_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kIS2C_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kPlus:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
                 TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kModulate:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kISCModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
-                TEST_ASSERT(kReverseSubtract_GrBlendEquation == xpi.fBlendInfo.fEquation);
-                TEST_ASSERT(kDC_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
+                TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kScreen:
                 TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
                 TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
-                TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
-                TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fPrimaryOutputType);
+                TEST_ASSERT(kInvalid_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
                 TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kISC_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             default:
@@ -864,14 +875,15 @@ static void test_color_opaque_no_coverage(skiatest::Reporter* reporter, const Gr
                 TEST_ASSERT(!xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kSrcOver:
-                TEST_ASSERT(xpi.fCanCombineOverlappedStencilAndCover);
+                // We don't specialize opaque src-over. See note in GrPorterDuffXferProcessor.cpp
+                TEST_ASSERT(!xpi.fCanCombineOverlappedStencilAndCover);
                 TEST_ASSERT(!xpi.fIgnoresInputColor);
-                TEST_ASSERT(!xpi.fCompatibleWithCoverageAsAlpha);
+                TEST_ASSERT(xpi.fCompatibleWithCoverageAsAlpha);
                 TEST_ASSERT(kModulate_OutputType == xpi.fPrimaryOutputType);
                 TEST_ASSERT(kNone_OutputType == xpi.fSecondaryOutputType);
                 TEST_ASSERT(kAdd_GrBlendEquation == xpi.fBlendInfo.fEquation);
                 TEST_ASSERT(kOne_GrBlendCoeff == xpi.fBlendInfo.fSrcBlend);
-                TEST_ASSERT(kZero_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
+                TEST_ASSERT(kISA_GrBlendCoeff == xpi.fBlendInfo.fDstBlend);
                 TEST_ASSERT(xpi.fBlendInfo.fWriteColor);
                 break;
             case SkBlendMode::kDstOver:
@@ -1004,51 +1016,69 @@ static void test_color_opaque_no_coverage(skiatest::Reporter* reporter, const Gr
 
 static void test_lcd_coverage_fallback_case(skiatest::Reporter* reporter, const GrCaps& caps) {
     const GrXPFactory* xpf = GrPorterDuffXPFactory::Get(SkBlendMode::kSrcOver);
-    GrProcessorAnalysisColor color = GrColorPackRGBA(123, 45, 67, 221);
+    GrProcessorAnalysisColor color = GrColorPackRGBA(123, 45, 67, 255);
     GrProcessorAnalysisCoverage coverage = GrProcessorAnalysisCoverage::kLCD;
-    SkASSERT(!(GrXPFactory::GetAnalysisProperties(xpf, color, coverage, caps) &
-               GrXPFactory::AnalysisProperties::kRequiresDstTexture));
-    sk_sp<const GrXferProcessor> xp(
-            GrXPFactory::MakeXferProcessor(xpf, color, coverage, false, caps));
-    if (!xp) {
+    TEST_ASSERT(!(GrXPFactory::GetAnalysisProperties(xpf, color, coverage, caps,
+                                                     GrPixelConfigIsClamped::kYes) &
+                  GrXPFactory::AnalysisProperties::kRequiresDstTexture));
+    sk_sp<const GrXferProcessor> xp_opaque(
+            GrXPFactory::MakeXferProcessor(xpf, color, coverage, false, caps,
+                                           GrPixelConfigIsClamped::kYes));
+    if (!xp_opaque) {
         ERRORF(reporter, "Failed to create an XP with LCD coverage.");
         return;
     }
 
     GrXferProcessor::BlendInfo blendInfo;
+    xp_opaque->getBlendInfo(&blendInfo);
+    TEST_ASSERT(blendInfo.fWriteColor);
+
+    // Test with non-opaque alpha
+    color = GrColorPackRGBA(123, 45, 67, 221);
+    coverage = GrProcessorAnalysisCoverage::kLCD;
+    TEST_ASSERT(!(GrXPFactory::GetAnalysisProperties(xpf, color, coverage, caps,
+                                                     GrPixelConfigIsClamped::kYes) &
+                GrXPFactory::AnalysisProperties::kRequiresDstTexture));
+    sk_sp<const GrXferProcessor> xp(
+            GrXPFactory::MakeXferProcessor(xpf, color, coverage, false, caps,
+                                           GrPixelConfigIsClamped::kYes));
+    if (!xp) {
+        ERRORF(reporter, "Failed to create an XP with LCD coverage.");
+        return;
+    }
+
     xp->getBlendInfo(&blendInfo);
     TEST_ASSERT(blendInfo.fWriteColor);
 }
 
-DEF_GPUTEST(PorterDuffNoDualSourceBlending, reporter, /*factory*/) {
-    GrContextOptions opts;
+DEF_GPUTEST(PorterDuffNoDualSourceBlending, reporter, options) {
+    GrContextOptions opts = options;
     opts.fSuppressDualSourceBlending = true;
     sk_gpu_test::GrContextFactory mockFactory(opts);
     GrContext* ctx = mockFactory.get(sk_gpu_test::GrContextFactory::kNullGL_ContextType);
     if (!ctx) {
-        SkFAIL("Failed to create null context without ARB_blend_func_extended.");
+        SK_ABORT("Failed to create null context without ARB_blend_func_extended.");
         return;
     }
 
+    GrGpu* gpu = ctx->contextPriv().getGpu();
+    GrProxyProvider* proxyProvider = ctx->contextPriv().proxyProvider();
     const GrCaps& caps = *ctx->caps();
     if (caps.shaderCaps()->dualSourceBlendingSupport()) {
-        SkFAIL("Null context failed to honor request for no ARB_blend_func_extended.");
+        SK_ABORT("Null context failed to honor request for no ARB_blend_func_extended.");
         return;
     }
 
-    GrBackendObject backendTexHandle =
-        ctx->getGpu()->createTestingOnlyBackendTexture(nullptr, 100, 100, kRGBA_8888_GrPixelConfig);
-    GrBackendTexture backendTex = GrTest::CreateBackendTexture(ctx->contextPriv().getBackend(),
-                                                               100,
-                                                               100,
-                                                               kRGBA_8888_GrPixelConfig,
-                                                               backendTexHandle);
+    GrBackendTexture backendTex =
+        gpu->createTestingOnlyBackendTexture(nullptr, 100, 100, kRGBA_8888_GrPixelConfig,
+                                             false, GrMipMapped::kNo);
 
-    GrXferProcessor::DstTexture fakeDstTexture;
-    fakeDstTexture.setTexture(
-        ctx->resourceProvider()->wrapBackendTexture(backendTex, kTopLeft_GrSurfaceOrigin,
-                                                    kNone_GrBackendTextureFlag, 0,
-                                                    kBorrow_GrWrapOwnership));
+    GrXferProcessor::DstProxy fakeDstProxy;
+    {
+        sk_sp<GrTextureProxy> proxy =
+                proxyProvider->wrapBackendTexture(backendTex, kTopLeft_GrSurfaceOrigin);
+        fakeDstProxy.setProxy(std::move(proxy));
+    }
 
     static const GrProcessorAnalysisColor colorInputs[] = {
             GrProcessorAnalysisColor::Opaque::kNo, GrProcessorAnalysisColor::Opaque::kYes,
@@ -1062,7 +1092,8 @@ DEF_GPUTEST(PorterDuffNoDualSourceBlending, reporter, /*factory*/) {
                 SkBlendMode xfermode = static_cast<SkBlendMode>(m);
                 const GrXPFactory* xpf = GrPorterDuffXPFactory::Get(xfermode);
                 sk_sp<const GrXferProcessor> xp(
-                        GrXPFactory::MakeXferProcessor(xpf, colorInput, coverageType, false, caps));
+                        GrXPFactory::MakeXferProcessor(xpf, colorInput, coverageType, false, caps,
+                                                       GrPixelConfigIsClamped::kYes));
                 if (!xp) {
                     ERRORF(reporter, "Failed to create an XP without dual source blending.");
                     return;
@@ -1071,7 +1102,7 @@ DEF_GPUTEST(PorterDuffNoDualSourceBlending, reporter, /*factory*/) {
             }
         }
     }
-    ctx->getGpu()->deleteTestingOnlyBackendTexture(backendTexHandle);
+    gpu->deleteTestingOnlyBackendTexture(backendTex);
 }
 
 #endif

@@ -83,7 +83,7 @@ protected:
 #endif
 
 #if SK_SUPPORT_GPU
-        int lastEdgeType = (kEffect_Type == fType) ? kLast_GrProcessorEdgeType: 0;
+        int lastEdgeType = (kEffect_Type == fType) ? (int) GrClipEdgeType::kLast: 0;
 #else
         int lastEdgeType = 0;
 #endif
@@ -105,20 +105,22 @@ protected:
 #if SK_SUPPORT_GPU
                         SkRRect rrect = fRRects[curRRect];
                         rrect.offset(SkIntToScalar(x), SkIntToScalar(y));
-                        GrPrimitiveEdgeType edgeType = (GrPrimitiveEdgeType) et;
-                        sk_sp<GrFragmentProcessor> fp(GrRRectEffect::Make(edgeType, rrect));
+                        GrClipEdgeType edgeType = (GrClipEdgeType) et;
+                        const auto& caps = *renderTargetContext->caps()->shaderCaps();
+                        auto fp = GrRRectEffect::Make(edgeType, rrect, caps);
                         if (fp) {
                             GrPaint grPaint;
                             grPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrc));
                             grPaint.addCoverageFragmentProcessor(std::move(fp));
+                            grPaint.setColor4f(GrColor4f(0, 0, 0, 1.f));
 
                             SkRect bounds = rrect.getBounds();
                             bounds.outset(2.f, 2.f);
 
-                            std::unique_ptr<GrLegacyMeshDrawOp> op(GrRectOpFactory::MakeNonAAFill(
-                                    0xff000000, SkMatrix::I(), bounds, nullptr, nullptr));
-                            renderTargetContext->priv().testingOnly_addLegacyMeshDrawOp(
-                                    std::move(grPaint), GrAAType::kNone, std::move(op));
+                            renderTargetContext->priv().testingOnly_addDrawOp(
+                                    GrRectOpFactory::MakeNonAAFill(std::move(grPaint),
+                                                                   SkMatrix::I(), bounds,
+                                                                   GrAAType::kNone));
                         } else {
                             drew = false;
                         }

@@ -8,10 +8,10 @@
 #ifndef SkGlyphCache_Globals_DEFINED
 #define SkGlyphCache_Globals_DEFINED
 
-#include "SkGlyphCache.h"
 #include "SkMutex.h"
 #include "SkSpinlock.h"
-#include "SkTLS.h"
+
+class SkGlyphCache;
 
 #ifndef SK_DEFAULT_FONT_CACHE_COUNT_LIMIT
     #define SK_DEFAULT_FONT_CACHE_COUNT_LIMIT   2048
@@ -19,6 +19,10 @@
 
 #ifndef SK_DEFAULT_FONT_CACHE_LIMIT
     #define SK_DEFAULT_FONT_CACHE_LIMIT     (2 * 1024 * 1024)
+#endif
+
+#ifndef SK_DEFAULT_FONT_CACHE_POINT_SIZE_LIMIT
+    #define SK_DEFAULT_FONT_CACHE_POINT_SIZE_LIMIT  256
 #endif
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -31,16 +35,12 @@ public:
         fCacheSizeLimit = SK_DEFAULT_FONT_CACHE_LIMIT;
         fCacheCount = 0;
         fCacheCountLimit = SK_DEFAULT_FONT_CACHE_COUNT_LIMIT;
+        fPointSizeLimit = SK_DEFAULT_FONT_CACHE_POINT_SIZE_LIMIT;
     }
 
-    ~SkGlyphCache_Globals() {
-        SkGlyphCache* cache = fHead;
-        while (cache) {
-            SkGlyphCache* next = cache->fNext;
-            delete cache;
-            cache = next;
-        }
-    }
+    ~SkGlyphCache_Globals();
+
+    static void AttachCache(SkGlyphCache* cache);
 
     mutable SkSpinlock     fLock;
 
@@ -62,6 +62,9 @@ public:
     size_t  getCacheSizeLimit() const;
     size_t  setCacheSizeLimit(size_t limit);
 
+    int  getCachePointSizeLimit() const;
+    int  setCachePointSizeLimit(int limit);
+
     void purgeAll(); // does not change budget
 
     // call when a glyphcache is available for caching (i.e. not in use)
@@ -77,6 +80,7 @@ private:
     size_t  fCacheSizeLimit;
     int32_t fCacheCountLimit;
     int32_t fCacheCount;
+    int32_t fPointSizeLimit;
 
     // Checkout budgets, modulated by the specified min-bytes-needed-to-purge,
     // and attempt to purge caches to match.

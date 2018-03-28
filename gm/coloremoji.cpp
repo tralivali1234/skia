@@ -66,7 +66,7 @@ protected:
 
     SkString onShortName() override {
         SkString name("coloremoji");
-        name.append(sk_tool_utils::platform_os_emoji());
+        name.append(sk_tool_utils::platform_font_manager());
         return name;
     }
 
@@ -84,12 +84,15 @@ protected:
         constexpr SkScalar textSizes[] = { 10, 30, 50, };
         SkPaint::FontMetrics metrics;
         SkScalar y = 0;
-        for (const SkScalar& textSize : textSizes) {
-            paint.setTextSize(textSize);
-            paint.getFontMetrics(&metrics);
-            y += -metrics.fAscent;
-            canvas->drawText(text, strlen(text), 10, y, paint);
-            y += metrics.fDescent + metrics.fLeading;
+        for (const bool& fakeBold : { false, true }) {
+            paint.setFakeBoldText(fakeBold);
+            for (const SkScalar& textSize : textSizes) {
+                paint.setTextSize(textSize);
+                paint.getFontMetrics(&metrics);
+                y += -metrics.fAscent;
+                canvas->drawString(text, 10, y, paint);
+                y += metrics.fDescent + metrics.fLeading;
+            }
         }
 
         y += 20;
@@ -124,7 +127,7 @@ protected:
                             shaderPaint.setTextSize(30);
                             shaderPaint.getFontMetrics(&metrics);
                             y += -metrics.fAscent;
-                            canvas->drawText(text, strlen(text), 380, y, shaderPaint);
+                            canvas->drawString(text, 380, y, shaderPaint);
                             y += metrics.fDescent + metrics.fLeading;
                         }
                     }
@@ -162,10 +165,10 @@ protected:
             canvas->save();
             canvas->drawRect(clipRect, clipHairline);
             paint.setAlpha(0x20);
-            canvas->drawText(text, strlen(text), 0, 0, paint);
+            canvas->drawString(text, 0, 0, paint);
             canvas->clipRect(clipRect);
             paint.setAlpha(0xFF);
-            canvas->drawText(text, strlen(text), 0, 0, paint);
+            canvas->drawString(text, 0, 0, paint);
             canvas->restore();
             canvas->translate(0, SkIntToScalar(25));
         }

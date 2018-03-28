@@ -35,7 +35,7 @@ sk_sp<SkData> read_file(const char* file_path) {
 }
 
 bool get_bitmap(sk_sp<SkData> fileBits, DiffResource& resource, bool sizeOnly) {
-    std::unique_ptr<SkCodec> codec(SkCodec::NewFromData(fileBits));
+    auto codec = SkCodec::MakeFromData(fileBits);
     if (!codec) {
         SkDebugf("ERROR: could not create codec for <%s>\n", resource.fFullPath.c_str());
         resource.fStatus = DiffResource::kCouldNotDecode_Status;
@@ -80,7 +80,7 @@ static void force_all_opaque(const SkBitmap& bitmap) {
 
 bool write_bitmap(const SkString& path, const SkBitmap& bitmap) {
     SkBitmap copy;
-    bitmap.copyTo(&copy, kN32_SkColorType);
+    sk_tool_utils::copy_to(&copy, kN32_SkColorType, bitmap);
     force_all_opaque(copy);
     return sk_tool_utils::EncodeImageToFile(path.c_str(), copy,
                                       SkEncodedImageFormat::kPNG, 100);

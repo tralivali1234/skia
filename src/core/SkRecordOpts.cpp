@@ -7,6 +7,7 @@
 
 #include "SkRecordOpts.h"
 
+#include "SkCanvasPriv.h"
 #include "SkRecordPattern.h"
 #include "SkRecords.h"
 #include "SkTDArray.h"
@@ -133,7 +134,6 @@ static bool fold_opacity_layer_color_to_paint(const SkPaint* layerPaint,
             !layerPaint->isSrcOver()     ||
             layerPaint->getMaskFilter()  ||
             layerPaint->getColorFilter() ||
-            layerPaint->getRasterizer()  ||
             layerPaint->getLooper()      ||
             layerPaint->getImageFilter()) {
             return false;
@@ -188,13 +188,14 @@ struct SaveLayerDrawRestoreNooper {
     typedef Pattern<Is<SaveLayer>, IsDraw, Is<Restore>> Match;
 
     bool onMatch(SkRecord* record, Match* match, int begin, int end) {
-        if (match->first<SaveLayer>()->backdrop) {
-            // can't throw away the layer if we have a backdrop
+        if (match->first<SaveLayer>()->backdrop || match->first<SaveLayer>()->clipMask) {
+            // can't throw away the layer if we have a backdrop or clip mask
             return false;
         }
 
-        if (match->first<SaveLayer>()->saveLayerFlags & (1U << 31)) {
-            // can't throw away the layer if the kDontClipToLayer_PrivateSaveLayerFlag is set
+        if (match->first<SaveLayer>()->saveLayerFlags &
+                SkCanvasPriv::kDontClipToLayer_SaveLayerFlag) {
+            // can't throw away the layer if set
             return false;
         }
 

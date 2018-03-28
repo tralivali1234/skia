@@ -9,9 +9,10 @@
 
 #ifdef SK_VULKAN
 
+#include "GrContext.h"
+#include "VkTestUtils.h"
 #include "vk/GrVkInterface.h"
 #include "vk/GrVkUtil.h"
-#include <vulkan.h>
 
 namespace {
 /**
@@ -108,9 +109,18 @@ GR_STATIC_ASSERT(sizeof(VkFence) <= sizeof(sk_gpu_test::PlatformFence));
 // TODO: Implement swap buffers and finish
 class VkTestContextImpl : public sk_gpu_test::VkTestContext {
 public:
-    static VkTestContext* Create() {
-        sk_sp<const GrVkBackendContext> backendContext(
-                GrVkBackendContext::Create(vkGetInstanceProcAddr, vkGetDeviceProcAddr));
+    static VkTestContext* Create(VkTestContext* sharedContext) {
+        sk_sp<const GrVkBackendContext> backendContext;
+        if (sharedContext) {
+            backendContext = sharedContext->getVkBackendContext();
+        } else {
+            PFN_vkGetInstanceProcAddr instProc;
+            PFN_vkGetDeviceProcAddr devProc;
+            if (!sk_gpu_test::LoadVkLibraryAndGetProcAddrFuncs(&instProc, &devProc)) {
+                return nullptr;
+            }
+            backendContext.reset(GrVkBackendContext::Create(instProc, devProc));
+        }
         if (!backendContext) {
             return nullptr;
         }
@@ -126,6 +136,10 @@ public:
 
     void finish() override {}
 
+    sk_sp<GrContext> makeGrContext(const GrContextOptions& options) override {
+        return GrContext::MakeVulkan(fVk, options);
+    }
+
 protected:
     void teardown() override {
         INHERITED::teardown();
@@ -140,6 +154,7 @@ private:
     }
 
     void onPlatformMakeCurrent() const override {}
+    std::function<void()> onPlatformGetAutoContextRestore() const override  { return nullptr; }
     void onPlatformSwapBuffers() const override {}
 
     typedef sk_gpu_test::VkTestContext INHERITED;
@@ -147,7 +162,9 @@ private:
 }  // anonymous namespace
 
 namespace sk_gpu_test {
-VkTestContext* CreatePlatformVkTestContext() { return VkTestContextImpl::Create(); }
+VkTestContext* CreatePlatformVkTestContext(VkTestContext* sharedContext) {
+    return VkTestContextImpl::Create(sharedContext);
+}
 }  // namespace sk_gpu_test
 
 #endif

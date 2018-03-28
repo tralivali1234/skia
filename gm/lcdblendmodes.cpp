@@ -62,10 +62,7 @@ protected:
         canvas->drawRect(r, p);
 
         SkImageInfo info = SkImageInfo::MakeN32Premul(kWidth, kHeight);
-        auto surface(canvas->makeSurface(info));
-        if (nullptr == surface) {
-            surface = SkSurface::MakeRaster(info);
-        }
+        auto surface(sk_tool_utils::makeSurface(canvas, info));
 
         SkCanvas* surfCanvas = surface->getCanvas();
         this->drawColumn(surfCanvas, SK_ColorBLACK, SK_ColorWHITE, false);
@@ -133,7 +130,7 @@ protected:
                 paint.setShader(make_shader(r));
             }
             SkString string(SkBlendMode_Name(gModes[m]));
-            canvas->drawText(string.c_str(), string.size(), 0, y, paint);
+            canvas->drawString(string, 0, y, paint);
             y+=fTextHeight;
         }
     }

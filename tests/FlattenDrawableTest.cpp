@@ -257,7 +257,7 @@ DEF_TEST(FlattenRecordedDrawable, r) {
     canvas->drawPaint(paint);
     SkPaint textPaint;
     textPaint.setColor(SK_ColorBLUE);
-    canvas->drawText("TEXT", 4, 467.0f, 100.0f, textPaint);
+    canvas->drawString("TEXT", 467.0f, 100.0f, textPaint);
 
     // Draw some drawables as well
     sk_sp<SkDrawable> drawable(new IntDrawable(1, 2, 3, 4));
@@ -284,3 +284,18 @@ DEF_TEST(FlattenRecordedDrawable, r) {
     REPORTER_ASSERT(r, out);
     REPORTER_ASSERT(r, !strcmp("SkRecordedDrawable", out->getTypeName()));
 }
+
+// be sure these constructs compile, don't assert, and return null
+DEF_TEST(Flattenable_EmptyDeserialze, reporter) {
+    auto data = SkData::MakeEmpty();
+
+    #define test(name)  REPORTER_ASSERT(reporter, !name::Deserialize(data->data(), data->size()))
+    test(SkPathEffect);
+    test(SkMaskFilter);
+    test(SkShaderBase); // todo: make this just be shader!
+    test(SkColorFilter);
+    test(SkImageFilter);
+    test(SkDrawLooper);
+    #undef test
+}
+

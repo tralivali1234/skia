@@ -55,10 +55,19 @@ public:
      *                        kOpaque   optimization hint, |dst| alphas set to 1
      *
      */
-    bool apply(ColorFormat dstFormat, void* dst, ColorFormat srcFormat, const void* src, int count,
-               SkAlphaType alphaType) const;
+    virtual bool apply(ColorFormat dstFormat, void* dst, ColorFormat srcFormat, const void* src,
+                       int count, SkAlphaType alphaType) const = 0;
 
     virtual ~SkColorSpaceXform() {}
+
+    enum AlphaOp {
+        kPreserve_AlphaOp,      // just transfer src-alpha to dst-alpha
+        kPremul_AlphaOp,        // like kPreserve, but multiplies RGB by it
+        kSrcIsOpaque_AlphaOp,   // src alphas are all 1, this is a perf hint
+    };
+    static bool Apply(SkColorSpace* dstCS, ColorFormat dstFormat, void* dst,
+                      SkColorSpace* srcCS, ColorFormat srcFormat, const void* src,
+                      int count, AlphaOp);
 
 protected:
     SkColorSpaceXform() {}

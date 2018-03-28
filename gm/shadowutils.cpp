@@ -11,25 +11,28 @@
 #include "SkResourceCache.h"
 #include "SkShadowUtils.h"
 
-void draw_shadow(SkCanvas* canvas, const SkPath& path, int height, SkColor color, SkPoint3 lightPos,
-                 SkScalar lightR, bool isAmbient, uint32_t flags, SkResourceCache* cache) {
+void draw_shadow(SkCanvas* canvas, const SkPath& path, SkScalar height, SkColor color,
+                 SkPoint3 lightPos, SkScalar lightR, bool isAmbient, uint32_t flags) {
     SkScalar ambientAlpha = isAmbient ? .5f : 0.f;
     SkScalar spotAlpha = isAmbient ? 0.f : .5f;
-    SkShadowUtils::DrawShadow(canvas, path, height, lightPos, lightR, ambientAlpha, spotAlpha,
-                              color, flags, cache);
+    SkColor ambientColor = SkColorSetARGB(ambientAlpha*SkColorGetA(color), SkColorGetR(color),
+                                          SkColorGetG(color), SkColorGetB(color));
+    SkColor spotColor = SkColorSetARGB(spotAlpha*SkColorGetA(color), SkColorGetR(color),
+                                       SkColorGetG(color), SkColorGetB(color));
+    SkShadowUtils::DrawShadow(canvas, path, SkPoint3{ 0, 0, height}, lightPos, lightR,
+                              ambientColor, spotColor, flags);
 }
 
 static constexpr int kW = 800;
-static constexpr int kH = 800;
+static constexpr int kH = 960;
 
-DEF_SIMPLE_GM(shadow_utils, canvas, kW, kH) {
-    // SkShadowUtils uses a cache of SkVertices meshes. The vertices are created in a local
-    // coordinate system and then translated when reused. The coordinate system depends on
-    // parameters to the generating draw. If other threads are hitting the cache while this GM is
-    // running then we may have different cache behavior leading to slight rendering differences.
-    // To avoid that we use our own isolated cache rather than the global cache.
-    SkResourceCache cache(1 << 20);
+enum ShadowMode {
+    kDebugColorNoOccluders,
+    kDebugColorOccluders,
+    kGrayscale
+};
 
+void draw_paths(SkCanvas* canvas, ShadowMode mode) {
     SkTArray<SkPath> paths;
     paths.push_back().addRoundRect(SkRect::MakeWH(50, 50), 10, 10);
     SkRRect oddRRect;
@@ -40,10 +43,35 @@ DEF_SIMPLE_GM(shadow_utils, canvas, kW, kH) {
     paths.push_back().cubicTo(100, 50, 20, 100, 0, 0);
     paths.push_back().addOval(SkRect::MakeWH(20, 60));
 
+    // star
+    SkTArray<SkPath> concavePaths;
+    concavePaths.push_back().moveTo(0.0f, -33.3333f);
+    concavePaths.back().lineTo(9.62f, -16.6667f);
+    concavePaths.back().lineTo(28.867f, -16.6667f);
+    concavePaths.back().lineTo(19.24f, 0.0f);
+    concavePaths.back().lineTo(28.867f, 16.6667f);
+    concavePaths.back().lineTo(9.62f, 16.6667f);
+    concavePaths.back().lineTo(0.0f, 33.3333f);
+    concavePaths.back().lineTo(-9.62f, 16.6667f);
+    concavePaths.back().lineTo(-28.867f, 16.6667f);
+    concavePaths.back().lineTo(-19.24f, 0.0f);
+    concavePaths.back().lineTo(-28.867f, -16.6667f);
+    concavePaths.back().lineTo(-9.62f, -16.6667f);
+    concavePaths.back().close();
+
+    // dumbbell
+    concavePaths.push_back().moveTo(50, 0);
+    concavePaths.back().cubicTo(100, 25, 60, 50, 50, 0);
+    concavePaths.back().cubicTo(0, -25, 40, -50, 50, 0);
+
     static constexpr SkScalar kPad = 15.f;
-    static constexpr SkPoint3 kLightPos = {250, 400, 500};
     static constexpr SkScalar kLightR = 100.f;
     static constexpr SkScalar kHeight = 50.f;
+
+    // transform light position relative to canvas to handle tiling
+    SkPoint lightXY = canvas->getTotalMatrix().mapXY(250, 400);
+    SkPoint3 lightPos = { lightXY.fX, lightXY.fY, 500 };
+
     canvas->translate(3 * kPad, 3 * kPad);
     canvas->save();
     SkScalar x = 0;
@@ -54,7 +82,7 @@ DEF_SIMPLE_GM(shadow_utils, canvas, kW, kH) {
     m->setRotate(33.f, 25.f, 25.f);
     m->postScale(1.2f, 0.8f, 25.f, 25.f);
     for (auto& m : matrices) {
-        for (auto flags : {kNone_ShadowFlag, kTransparentOccluder_ShadowFlag}) {
+        for (int flags : { kNone_ShadowFlag, kTransparentOccluder_ShadowFlag }) {
             for (const auto& path : paths) {
                 SkRect postMBounds = path.getBounds();
                 m.mapRect(&postMBounds);
@@ -70,17 +98,37 @@ DEF_SIMPLE_GM(shadow_utils, canvas, kW, kH) {
 
                 canvas->save();
                 canvas->concat(m);
-                draw_shadow(canvas, path, kHeight, SK_ColorRED, kLightPos, kLightR, true, flags,
-                            &cache);
-                draw_shadow(canvas, path, kHeight, SK_ColorBLUE, kLightPos, kLightR, false, flags,
-                            &cache);
 
-                // Draw the path outline in green on top of the ambient and spot shadows.
+                if (kDebugColorNoOccluders == mode || kDebugColorOccluders == mode) {
+                    draw_shadow(canvas, path, kHeight, SK_ColorRED, lightPos, kLightR,
+                                true, flags);
+                    draw_shadow(canvas, path, kHeight, SK_ColorBLUE, lightPos, kLightR,
+                                false, flags);
+                } else if (kGrayscale == mode) {
+                    SkColor ambientColor = SkColorSetARGB(0.1f * 255, 0, 0, 0);
+                    SkColor spotColor = SkColorSetARGB(0.25f * 255, 0, 0, 0);
+                    SkShadowUtils::DrawShadow(canvas, path, SkPoint3{0, 0, kHeight}, lightPos,
+                                              kLightR, ambientColor, spotColor, flags);
+                }
+
                 SkPaint paint;
-                paint.setColor(SK_ColorGREEN);
                 paint.setAntiAlias(true);
-                paint.setStyle(SkPaint::kStroke_Style);
-                paint.setStrokeWidth(0);
+                if (kDebugColorNoOccluders == mode) {
+                    // Draw the path outline in green on top of the ambient and spot shadows.
+                    if (SkToBool(flags & kTransparentOccluder_ShadowFlag)) {
+                        paint.setColor(SK_ColorCYAN);
+                    } else {
+                        paint.setColor(SK_ColorGREEN);
+                    }
+                    paint.setStyle(SkPaint::kStroke_Style);
+                    paint.setStrokeWidth(0);
+                } else {
+                    paint.setColor(kDebugColorOccluders == mode ? SK_ColorLTGRAY : SK_ColorWHITE);
+                    if (SkToBool(flags & kTransparentOccluder_ShadowFlag)) {
+                        paint.setAlpha(128);
+                    }
+                    paint.setStyle(SkPaint::kFill_Style);
+                }
                 canvas->drawPath(path, paint);
                 canvas->restore();
 
@@ -90,6 +138,56 @@ DEF_SIMPLE_GM(shadow_utils, canvas, kW, kH) {
             }
         }
     }
+
+    // concave paths
+    canvas->restore();
+    canvas->translate(kPad, dy);
+    canvas->save();
+    x = kPad;
+    dy = 0;
+    for (auto& m : matrices) {
+        // for the concave paths we are not clipping, so transparent and opaque are the same
+        for (const auto& path : concavePaths) {
+            SkRect postMBounds = path.getBounds();
+            m.mapRect(&postMBounds);
+            SkScalar w = postMBounds.width() + kHeight;
+            SkScalar dx = w + kPad;
+
+            canvas->save();
+            canvas->concat(m);
+
+            if (kDebugColorNoOccluders == mode || kDebugColorOccluders == mode) {
+                draw_shadow(canvas, path, kHeight, SK_ColorRED, lightPos, kLightR,
+                            true, kNone_ShadowFlag);
+                draw_shadow(canvas, path, kHeight, SK_ColorBLUE, lightPos, kLightR,
+                            false, kNone_ShadowFlag);
+            } else if (kGrayscale == mode) {
+                SkColor ambientColor = SkColorSetARGB(0.1f * 255, 0, 0, 0);
+                SkColor spotColor = SkColorSetARGB(0.25f * 255, 0, 0, 0);
+                SkShadowUtils::DrawShadow(canvas, path, SkPoint3{ 0, 0, kHeight }, lightPos,
+                                          kLightR, ambientColor, spotColor, kNone_ShadowFlag);
+            }
+
+            SkPaint paint;
+            paint.setAntiAlias(true);
+            if (kDebugColorNoOccluders == mode) {
+                // Draw the path outline in green on top of the ambient and spot shadows.
+                paint.setColor(SK_ColorGREEN);
+                paint.setStyle(SkPaint::kStroke_Style);
+                paint.setStrokeWidth(0);
+            } else {
+                paint.setColor(kDebugColorOccluders == mode ? SK_ColorLTGRAY : SK_ColorWHITE);
+                paint.setStyle(SkPaint::kFill_Style);
+            }
+            canvas->drawPath(path, paint);
+            canvas->restore();
+
+            canvas->translate(dx, 0);
+            x += dx;
+            dy = SkTMax(dy, postMBounds.height() + kPad + kHeight);
+        }
+    }
+
     // Show where the light is in x,y as a circle (specified in device space).
     SkMatrix invCanvasM = canvas->getTotalMatrix();
     if (invCanvasM.invert(&invCanvasM)) {
@@ -98,7 +196,19 @@ DEF_SIMPLE_GM(shadow_utils, canvas, kW, kH) {
         SkPaint paint;
         paint.setColor(SK_ColorBLACK);
         paint.setAntiAlias(true);
-        canvas->drawCircle(kLightPos.fX, kLightPos.fY, kLightR / 10.f, paint);
+        canvas->drawCircle(lightPos.fX, lightPos.fY, kLightR / 10.f, paint);
         canvas->restore();
     }
+}
+
+DEF_SIMPLE_GM(shadow_utils, canvas, kW, kH) {
+    draw_paths(canvas, kDebugColorNoOccluders);
+}
+
+DEF_SIMPLE_GM(shadow_utils_occl, canvas, kW, kH) {
+    draw_paths(canvas, kDebugColorOccluders);
+}
+
+DEF_SIMPLE_GM(shadow_utils_gray, canvas, kW, kH) {
+    draw_paths(canvas, kGrayscale);
 }

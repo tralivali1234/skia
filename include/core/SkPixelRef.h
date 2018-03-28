@@ -19,7 +19,6 @@
 #include "SkSize.h"
 #include "SkString.h"
 
-class SkColorTable;
 struct SkIRect;
 
 class GrTexture;
@@ -32,15 +31,12 @@ class SkDiscardableMemory;
 */
 class SK_API SkPixelRef : public SkRefCnt {
 public:
-    SkPixelRef(const SkImageInfo&, void* addr, size_t rowBytes, sk_sp<SkColorTable> = nullptr);
+    SkPixelRef(int width, int height, void* addr, size_t rowBytes);
     ~SkPixelRef() override;
 
-    const SkImageInfo& info() const {
-        return fInfo;
-    }
-
+    int width() const { return fWidth; }
+    int height() const { return fHeight; }
     void* pixels() const { return fPixels; }
-    SkColorTable* colorTable() const { return fCTable.get(); }
     size_t rowBytes() const { return fRowBytes; }
 
     /** Returns a non-zero, unique value corresponding to the pixels in this
@@ -67,13 +63,6 @@ public:
      *  getGenerationID().
      */
     void notifyPixelsChanged();
-
-    /**
-     *  Change the info's AlphaType. Note that this does not automatically
-     *  invalidate the generation ID. If the pixel values themselves have
-     *  changed, then you must explicitly call notifyPixelsChanged() as well.
-     */
-    void changeAlphaType(SkAlphaType at);
 
     /** Returns true if this pixelref is marked as immutable, meaning that the
         contents of its pixels will not change for the lifetime of the pixelref.
@@ -108,33 +97,19 @@ public:
         fAddedToCache.store(true);
     }
 
-    virtual SkDiscardableMemory* diagnostic_only_getDiscardable() const { return NULL; }
+    virtual SkDiscardableMemory* diagnostic_only_getDiscardable() const { return nullptr; }
 
 protected:
     // default impl does nothing.
     virtual void onNotifyPixelsChanged();
 
-    /**
-     *  Returns the size (in bytes) of the internally allocated memory.
-     *  This should be implemented in all serializable SkPixelRef derived classes.
-     *  SkBitmap::fPixelRefOffset + SkBitmap::getSafeSize() should never overflow this value,
-     *  otherwise the rendering code may attempt to read memory out of bounds.
-     *
-     *  @return default impl returns 0.
-     */
-    virtual size_t getAllocatedSizeInBytes() const;
-
-#ifdef SK_BUILD_FOR_ANDROID_FRAMEWORK
-    // This is undefined if there are clients in-flight trying to use us
-    void android_only_reset(const SkImageInfo&, size_t rowBytes, sk_sp<SkColorTable>);
-#endif
+    void android_only_reset(int width, int height, size_t rowBytes);
 
 private:
-    // mostly const. fInfo.fAlpahType can be changed at runtime.
-    const SkImageInfo fInfo;
-    sk_sp<SkColorTable> fCTable;
-    void*             fPixels;
-    size_t            fRowBytes;
+    int                 fWidth;
+    int                 fHeight;
+    void*               fPixels;
+    size_t              fRowBytes;
 
     // Bottom bit indicates the Gen ID is unique.
     bool genIDIsUnique() const { return SkToBool(fTaggedGenID.load() & 1); }
@@ -165,14 +140,9 @@ private:
     friend class SkImage_Raster;
     friend class SkSpecialImage_Raster;
 
-    // When copying a bitmap to another with the same shape and config, we can safely
-    // clone the pixelref generation ID too, which makes them equivalent under caching.
-    friend class SkBitmap;  // only for cloneGenID
-    void cloneGenID(const SkPixelRef&);
-
     void setImmutableWithID(uint32_t genID);
     friend class SkImage_Gpu;
-    friend class SkImageCacherator;
+    friend class SkImage_Lazy;
     friend class SkSpecialImage_Gpu;
     friend void SkBitmapCache_setImmutableWithID(SkPixelRef*, uint32_t);
 

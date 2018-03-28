@@ -6,7 +6,7 @@
  */
 
 #include "SkTypes.h"
-#if defined(SK_BUILD_FOR_WIN32)
+#if defined(SK_BUILD_FOR_WIN)
 
 #include "SkLeanWindows.h"
 
@@ -34,13 +34,12 @@
 #include "SkImage.h"
 #include "SkImageEncoder.h"
 #include "SkImagePriv.h"
-#include "SkMaskFilter.h"
+#include "SkMaskFilterBase.h"
 #include "SkPaint.h"
 #include "SkPathEffect.h"
 #include "SkPathOps.h"
 #include "SkPoint.h"
 #include "SkRasterClip.h"
-#include "SkRasterizer.h"
 #include "SkSFNTHeader.h"
 #include "SkShader.h"
 #include "SkSize.h"
@@ -1049,7 +1048,7 @@ HRESULT SkXPSDevice::createXpsBrush(const SkPaint& skPaint,
     SkMatrix outMatrix;
     SkShader::TileMode xy[2];
     SkImage* image = shader->isAImage(&outMatrix, xy);
-    if (image && image->asLegacyBitmap(&outTexture, SkImage::kRO_LegacyBitmapMode)) {
+    if (image && image->asLegacyBitmap(&outTexture)) {
         //TODO: outMatrix??
         SkMatrix localMatrix = shader->getLocalMatrix();
         if (parentTransform) {
@@ -1076,7 +1075,6 @@ static bool rect_must_be_pathed(const SkPaint& paint, const SkMatrix& matrix) {
 
     return paint.getPathEffect() ||
            paint.getMaskFilter() ||
-           paint.getRasterizer() ||
            (stroke && (
                (matrix.hasPerspective() && !zeroWidth) ||
                SkPaint::kMiter_Join != paint.getStrokeJoin() ||
@@ -1518,7 +1516,7 @@ void SkXPSDevice::drawPath(const SkPath& platonicPath,
     SkMatrix matrix = this->ctm();
     SkPath* skeletalPath = const_cast<SkPath*>(&platonicPath);
     if (prePathMatrix) {
-        if (paintHasPathEffect || paint->getRasterizer()) {
+        if (paintHasPathEffect) {
             if (!pathIsMutable) {
                 skeletalPath = &modifiedPath;
                 pathIsMutable = true;
@@ -1562,11 +1560,10 @@ void SkXPSDevice::drawPath(const SkPath& platonicPath,
     HRVM(shadedPath->SetGeometryLocal(shadedGeometry.get()),
          "Could not add the shaded geometry to shaded path.");
 
-    SkRasterizer* rasterizer = paint->getRasterizer();
     SkMaskFilter* filter = paint->getMaskFilter();
 
     //Determine if we will draw or shade and mask.
-    if (rasterizer || filter) {
+    if (filter) {
         if (paint->getStyle() != SkPaint::kFill_Style) {
             paint.writable()->setStyle(SkPaint::kFill_Style);
         }
@@ -1580,44 +1577,6 @@ void SkXPSDevice::drawPath(const SkPath& platonicPath,
                         this->ctm(),
                         &fill,
                         &stroke));
-
-    //Rasterizer
-    if (rasterizer) {
-        SkIRect clipIRect;
-        SkVector ppuScale;
-        this->convertToPpm(filter,
-                           &matrix,
-                           &ppuScale,
-                           this->cs().bounds(size(*this)).roundOut(),
-                           &clipIRect);
-
-        SkMask* mask = nullptr;
-
-        //[Fillable-path -> Mask]
-        SkMask rasteredMask;
-        if (rasterizer->rasterize(
-                *fillablePath,
-                matrix,
-                &clipIRect,
-                filter,  //just to compute how much to draw.
-                &rasteredMask,
-                SkMask::kComputeBoundsAndRenderImage_CreateMode)) {
-
-            SkAutoMaskFreeImage rasteredAmi(rasteredMask.fImage);
-            mask = &rasteredMask;
-
-            //[Mask -> Mask]
-            SkMask filteredMask;
-            if (filter && filter->filterMask(&filteredMask, *mask, this->ctm(), nullptr)) {
-                mask = &filteredMask;
-            }
-            SkAutoMaskFreeImage filteredAmi(filteredMask.fImage);
-
-            //Draw mask.
-            HRV(this->applyMask(*mask, ppuScale, shadedPath.get()));
-        }
-        return;
-    }
 
     //Mask filter
     if (filter) {
@@ -1656,7 +1615,7 @@ void SkXPSDevice::drawPath(const SkPath& platonicPath,
 
             //[Mask -> Mask]
             SkMask filteredMask;
-            if (filter->filterMask(&filteredMask, rasteredMask, matrix, nullptr)) {
+            if (as_MFB(filter)->filterMask(&filteredMask, rasteredMask, matrix, nullptr)) {
                 mask = &filteredMask;
             }
             SkAutoMaskFreeImage filteredAmi(filteredMask.fImage);
@@ -1780,7 +1739,9 @@ HRESULT SkXPSDevice::clipToPath(IXpsOMVisual* xpsVisual,
 }
 
 void SkXPSDevice::drawBitmap(const SkBitmap& bitmap,
-                             const SkMatrix& matrix, const SkPaint& paint) {
+                             SkScalar x,
+                             SkScalar y,
+                             const SkPaint& paint) {
     if (this->cs().isEmpty(size(*this))) {
         return;
     }
@@ -1807,7 +1768,7 @@ void SkXPSDevice::drawBitmap(const SkBitmap& bitmap,
     HRVM(shadedGeometry->GetFigures(&shadedFigures),
          "Could not get the figures for bitmap.");
 
-    SkMatrix transform = matrix;
+    SkMatrix transform = SkMatrix::MakeTrans(x, y);
     transform.postConcat(this->ctm());
 
     SkTScopedComPtr<IXpsOMMatrixTransform> xpsTransform;
@@ -1914,9 +1875,10 @@ HRESULT SkXPSDevice::CreateTypefaceUse(const SkPaint& paint,
     newTypefaceUse.ttcIndex = isTTC ? ttcIndex : -1;
     newTypefaceUse.fontData = fontData;
     newTypefaceUse.xpsFont = xpsFontResource.release();
-
-    SkAutoGlyphCache agc(paint, &this->surfaceProps(), &SkMatrix::I());
-    SkGlyphCache* glyphCache = agc.getCache();
+    auto glyphCache =
+        SkGlyphCache::FindOrCreateStrikeExclusive(
+            paint, &this->surfaceProps(),
+            SkScalerContextFlags::kNone, nullptr);
     unsigned int glyphCount = glyphCache->getGlyphCount();
     newTypefaceUse.glyphsUsed = new SkBitSet(glyphCount);
 
@@ -2020,9 +1982,9 @@ HRESULT SkXPSDevice::AddGlyphs(IXpsOMObjectFactory* xpsFactory,
 static int num_glyph_guess(SkPaint::TextEncoding encoding, const void* text, size_t byteLength) {
     switch (encoding) {
     case SkPaint::kUTF8_TextEncoding:
-        return SkUTF8_CountUnichars(static_cast<const char *>(text), byteLength);
+        return SkUTF8_CountUnichars(text, byteLength);
     case SkPaint::kUTF16_TextEncoding:
-        return SkUTF16_CountUnichars(static_cast<const uint16_t *>(text), SkToInt(byteLength));
+        return SkUTF16_CountUnichars(text, byteLength);
     case SkPaint::kGlyphID_TextEncoding:
         return SkToInt(byteLength / 2);
     default:
@@ -2037,7 +1999,6 @@ static bool text_must_be_pathed(const SkPaint& paint, const SkMatrix& matrix) {
         || SkPaint::kStroke_Style == style
         || SkPaint::kStrokeAndFill_Style == style
         || paint.getMaskFilter()
-        || paint.getRasterizer()
     ;
 }
 
@@ -2101,10 +2062,10 @@ void SkXPSDevice::drawText(const void* text, size_t byteLen,
     TypefaceUse* typeface;
     HRV(CreateTypefaceUse(paint, &typeface));
 
-    const SkMatrix& matrix = SkMatrix::I();
-
-    SkAutoGlyphCache    autoCache(paint, &this->surfaceProps(), &matrix);
-    SkGlyphCache*       cache = autoCache.getCache();
+    auto cache =
+        SkGlyphCache::FindOrCreateStrikeExclusive(
+            paint, &this->surfaceProps(),
+            SkScalerContextFlags::kNone, nullptr);
 
     // Advance width and offsets for glyphs measured in hundredths of the font em size
     // (XPS Spec 5.1.3).
@@ -2117,7 +2078,7 @@ void SkXPSDevice::drawText(const void* text, size_t byteLen,
 
     SkFindAndPlaceGlyph::ProcessText(
         paint.getTextEncoding(), static_cast<const char*>(text), byteLen,
-        SkPoint{ x, y }, matrix, paint.getTextAlign(), cache, processOneGlyph);
+        SkPoint{ x, y }, SkMatrix::I(), paint.getTextAlign(), cache.get(), processOneGlyph);
 
     if (xpsGlyphs.count() == 0) {
         return;
@@ -2159,10 +2120,10 @@ void SkXPSDevice::drawPosText(const void* text, size_t byteLen,
     TypefaceUse* typeface;
     HRV(CreateTypefaceUse(paint, &typeface));
 
-    const SkMatrix& matrix = SkMatrix::I();
-
-    SkAutoGlyphCache    autoCache(paint, &this->surfaceProps(), &matrix);
-    SkGlyphCache*       cache = autoCache.getCache();
+    auto cache =
+        SkGlyphCache::FindOrCreateStrikeExclusive(
+            paint, &this->surfaceProps(),
+            SkScalerContextFlags::kNone, nullptr);
 
     // Advance width and offsets for glyphs measured in hundredths of the font em size
     // (XPS Spec 5.1.3).
@@ -2175,7 +2136,8 @@ void SkXPSDevice::drawPosText(const void* text, size_t byteLen,
 
     SkFindAndPlaceGlyph::ProcessPosText(
         paint.getTextEncoding(), static_cast<const char*>(text), byteLen,
-        offset, matrix, pos, scalarsPerPos, paint.getTextAlign(), cache, processOneGlyph);
+        offset, SkMatrix::I(), pos, scalarsPerPos, paint.getTextAlign(),
+        cache.get(), processOneGlyph);
 
     if (xpsGlyphs.count() == 0) {
         return;
@@ -2273,4 +2235,4 @@ void SkXPSDevice::drawBitmapRect(const SkBitmap& bitmap,
     paintWithShader.setShader(std::move(bitmapShader));
     this->drawRect(actualDst, paintWithShader);
 }
-#endif//defined(SK_BUILD_FOR_WIN32)
+#endif//defined(SK_BUILD_FOR_WIN)

@@ -24,15 +24,15 @@ public:
     SubpixelTranslateView(const char imageFilename[],
                           float horizontalVelocity,
                           float verticalVelocity)
-      : fHorizontalVelocity(horizontalVelocity),
-        fVerticalVelocity(verticalVelocity) {
-      SkString resourcePath = GetResourcePath(imageFilename);
-      if (!decode_file(resourcePath.c_str(), &fBM)) {
-          fBM.allocN32Pixels(1, 1);
-          *(fBM.getAddr32(0,0)) = 0xFF0000FF; // red == bad
-      }
-      fCurPos = SkPoint::Make(0,0);
-      fSize = 200;
+        : fHorizontalVelocity(horizontalVelocity)
+        , fVerticalVelocity(verticalVelocity)
+    {
+        if (!DecodeDataToBitmap(GetResourceAsData(imageFilename), &fBM)) {
+            fBM.allocN32Pixels(1, 1);
+            *(fBM.getAddr32(0,0)) = 0xFF0000FF; // red == bad
+        }
+        fCurPos = SkPoint::Make(0,0);
+        fSize = 200;
     }
 
 protected:
@@ -71,7 +71,7 @@ protected:
             canvas->drawBitmapRect( fBM, r, &paint );
         }
 
-        canvas->drawText( "AA Scaled", strlen("AA Scaled"), fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fSize + 10), fCurPos.fY + fSize/2, paint );
+        canvas->drawString( "AA Scaled", fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fSize + 10), fCurPos.fY + fSize/2, paint );
 
         paint.setAntiAlias(false);
         for (size_t i = 0; i < SK_ARRAY_COUNT(gQualitys); ++i) {
@@ -79,7 +79,7 @@ protected:
             SkRect r = SkRect::MakeXYWH( fCurPos.fX + i * (fSize + 10), fCurPos.fY + fSize + 10, fSize, fSize );
             canvas->drawBitmapRect( fBM, r, &paint );
         }
-        canvas->drawText( "Scaled", strlen("Scaled"), fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fSize + 10), fCurPos.fY + fSize + 10 + fSize/2, paint );
+        canvas->drawString( "Scaled", fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fSize + 10), fCurPos.fY + fSize + 10 + fSize/2, paint );
 
         paint.setAntiAlias(true);
         for (size_t i = 0; i < SK_ARRAY_COUNT(gQualitys); ++i) {
@@ -87,7 +87,7 @@ protected:
             canvas->drawBitmap( fBM, fCurPos.fX + i * (fBM.width() + 10), fCurPos.fY + 2*(fSize + 10), &paint );
         }
 
-        canvas->drawText( "AA No Scale", strlen("AA No Scale"), fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fBM.width() + 10), fCurPos.fY + 2*(fSize + 10) + fSize/2, paint );
+        canvas->drawString( "AA No Scale", fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fBM.width() + 10), fCurPos.fY + 2*(fSize + 10) + fSize/2, paint );
 
         paint.setAntiAlias(false);
         for (size_t i = 0; i < SK_ARRAY_COUNT(gQualitys); ++i) {
@@ -95,12 +95,11 @@ protected:
             canvas->drawBitmap( fBM, fCurPos.fX + i * (fBM.width() + 10), fCurPos.fY + 2*(fSize + 10) + fBM.height() + 10, &paint );
         }
 
-        canvas->drawText( "No Scale", strlen("No Scale"), fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fBM.width() + 10), fCurPos.fY + 2*(fSize + 10) + fBM.height() + 10 + fSize/2, paint );
+        canvas->drawString( "No Scale", fCurPos.fX + SK_ARRAY_COUNT(gQualitys) * (fBM.width() + 10), fCurPos.fY + 2*(fSize + 10) + fBM.height() + 10 + fSize/2, paint );
 
 
         fCurPos.fX += fHorizontalVelocity;
         fCurPos.fY += fVerticalVelocity;
-        this->inval(nullptr);
     }
 
 private:
@@ -109,5 +108,5 @@ private:
 
 //////////////////////////////////////////////////////////////////////////////
 
-static SkView* MyFactory() { return new SubpixelTranslateView("mandrill_256.png", .05f, .05f); }
+static SkView* MyFactory() { return new SubpixelTranslateView("images/mandrill_256.png", .05f, .05f); }
 static SkViewRegister reg(MyFactory);

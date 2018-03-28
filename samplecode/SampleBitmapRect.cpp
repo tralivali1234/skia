@@ -8,6 +8,7 @@
 #include "SampleCode.h"
 #include "SkAnimTimer.h"
 #include "SkView.h"
+#include "SkBitmap.h"
 #include "SkCanvas.h"
 #include "SkGradientShader.h"
 #include "SkGraphics.h"
@@ -171,7 +172,7 @@ static void make_big_bitmap(SkBitmap* bm) {
 
     SkCanvas canvas(*bm);
 
-    canvas.drawText(gText, strlen(gText), 0, paint.getTextSize()*4/5, paint);
+    canvas.drawString(gText, 0, paint.getTextSize()*4/5, paint);
 }
 
 class BitmapRectView2 : public SampleView {

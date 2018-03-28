@@ -9,8 +9,7 @@
 #define SkColorSpaceXform_A2B_DEFINED
 
 #include "SkArenaAlloc.h"
-#include "SkColorSpaceXform_Base.h"
-#include "SkColorSpace_Base.h"
+#include "SkColorSpaceXform.h"
 #include "SkRasterPipeline.h"
 
 class SkColorSpace_A2B;
@@ -21,18 +20,17 @@ struct SkTableTransferFn {
     int          fSize;
 };
 
-class SkColorSpaceXform_A2B : public SkColorSpaceXform_Base {
+class SkColorSpaceXform_A2B : public SkColorSpaceXform {
 public:
-    bool onApply(ColorFormat dstFormat, void* dst, ColorFormat srcFormat, const void* src,
-                 int count, SkAlphaType alphaType) const override;
-
-private:
     SkColorSpaceXform_A2B(SkColorSpace_A2B* srcSpace, SkColorSpace_XYZ* dstSpace);
 
-    void addTransferFns(const SkColorSpaceTransferFn& fn, int channelCount);
+    bool apply(ColorFormat dstFormat, void* dst, ColorFormat srcFormat, const void* src,
+               int count, SkAlphaType alphaType) const override;
 
+private:
     void addTransferFn(const SkColorSpaceTransferFn& fn, int channelIndex);
 
+    bool buildTableFn(SkTableTransferFn* table);
     void addTableFn(const SkTableTransferFn& table, int channelIndex);
 
     void addMatrix(const SkMatrix44& matrix);
@@ -43,8 +41,6 @@ private:
 
     template <typename T>
     T* copy(const T& val) { return fAlloc.make<T>(val); }
-
-    friend class SkColorSpaceXform_Base;
 };
 
 #endif

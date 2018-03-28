@@ -59,33 +59,27 @@ SkPictureImageGenerator::SkPictureImageGenerator(const SkImageInfo& info, sk_sp<
 }
 
 bool SkPictureImageGenerator::onGetPixels(const SkImageInfo& info, void* pixels, size_t rowBytes,
-                                          SkPMColor ctable[], int* ctableCount) {
-    // Rely on SkCanvas factory to know what configs can and cannot be drawn into.
-    auto canvas = SkCanvas::MakeRasterDirect(info, pixels, rowBytes);
-    if (!canvas) {
-        return false;
-    }
-    canvas->clear(0);
-    canvas->drawPicture(fPicture, &fMatrix, fPaint.getMaybeNull());
-    return true;
-}
-
-bool SkPictureImageGenerator::onGetPixels(const SkImageInfo& info, void* pixels, size_t rowBytes,
                                           const Options& opts) {
-    // No need to use the xform canvas if we want fully color correct behavior or if we do not
-    // have a destination color space.
-    if (SkTransferFunctionBehavior::kRespect == opts.fBehavior || !info.colorSpace()) {
-        return this->onGetPixels(info, pixels, rowBytes, opts.fColorTable, opts.fColorTableCount);
-    }
+    bool useXformCanvas =
+            SkTransferFunctionBehavior::kIgnore == opts.fBehavior && info.colorSpace();
 
-    auto canvas = SkCanvas::MakeRasterDirect(info.makeColorSpace(nullptr), pixels, rowBytes);
+    SkSurfaceProps props(0, kUnknown_SkPixelGeometry);
+    SkImageInfo canvasInfo = useXformCanvas ? info.makeColorSpace(nullptr) : info;
+    std::unique_ptr<SkCanvas> canvas = SkCanvas::MakeRasterDirect(canvasInfo, pixels, rowBytes,
+                                                                  &props);
     if (!canvas) {
         return false;
     }
     canvas->clear(0);
 
-    auto xformCanvas = SkCreateColorSpaceXformCanvas(canvas.get(), info.refColorSpace());
-    xformCanvas->drawPicture(fPicture, &fMatrix, fPaint.getMaybeNull());
+    SkCanvas* canvasPtr = canvas.get();
+    std::unique_ptr<SkCanvas> xformCanvas;
+    if (useXformCanvas) {
+        xformCanvas = SkCreateColorSpaceXformCanvas(canvas.get(), info.refColorSpace());
+        canvasPtr = xformCanvas.get();
+    }
+
+    canvasPtr->drawPicture(fPicture, &fMatrix, fPaint.getMaybeNull());
     return true;
 }
 
@@ -108,27 +102,41 @@ SkImageGenerator::MakeFromPicture(const SkISize& size, sk_sp<SkPicture> picture,
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
 #if SK_SUPPORT_GPU
-sk_sp<GrTextureProxy> SkPictureImageGenerator::onGenerateTexture(GrContext* ctx,
-                                                                 const SkImageInfo& info,
-                                                                 const SkIPoint& origin) {
+sk_sp<GrTextureProxy> SkPictureImageGenerator::onGenerateTexture(
+        GrContext* ctx, const SkImageInfo& info, const SkIPoint& origin,
+        SkTransferFunctionBehavior behavior, bool willNeedMipMaps) {
     SkASSERT(ctx);
+    bool useXformCanvas = SkTransferFunctionBehavior::kIgnore == behavior && info.colorSpace();
 
     //
     // TODO: respect the usage, by possibly creating a different (pow2) surface
     //
-    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(ctx, SkBudgeted::kYes, info));
+    SkSurfaceProps props(0, kUnknown_SkPixelGeometry);
+    SkImageInfo surfaceInfo = useXformCanvas ? info.makeColorSpace(nullptr) : info;
+    sk_sp<SkSurface> surface(SkSurface::MakeRenderTarget(ctx, SkBudgeted::kYes, surfaceInfo,
+                                                         0, kTopLeft_GrSurfaceOrigin, &props,
+                                                         willNeedMipMaps));
     if (!surface) {
         return nullptr;
     }
 
+    SkCanvas* canvas = surface->getCanvas();
+    std::unique_ptr<SkCanvas> xformCanvas;
+    if (useXformCanvas) {
+        xformCanvas = SkCreateColorSpaceXformCanvas(canvas, info.refColorSpace());
+        canvas = xformCanvas.get();
+    }
+
     SkMatrix matrix = fMatrix;
     matrix.postTranslate(-origin.x(), -origin.y());
-    surface->getCanvas()->clear(0); // does NewRenderTarget promise to do this for us?
-    surface->getCanvas()->drawPicture(fPicture.get(), &matrix, fPaint.getMaybeNull());
+    canvas->clear(0);  // does NewRenderTarget promise to do this for us?
+    canvas->drawPicture(fPicture.get(), &matrix, fPaint.getMaybeNull());
     sk_sp<SkImage> image(surface->makeImageSnapshot());
     if (!image) {
         return nullptr;
     }
-    return as_IB(image)->asTextureProxyRef();
+    sk_sp<GrTextureProxy> proxy = as_IB(image)->asTextureProxyRef();
+    SkASSERT(!willNeedMipMaps || GrMipMapped::kYes == proxy->mipMapped());
+    return proxy;
 }
 #endif

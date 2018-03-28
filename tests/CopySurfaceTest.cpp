@@ -1,3 +1,4 @@
+
 /*
  * Copyright 2016 Google Inc.
  *
@@ -11,10 +12,8 @@
 #if SK_SUPPORT_GPU
 #include "GrContext.h"
 #include "GrContextPriv.h"
-#include "GrResourceProvider.h"
-#include "GrSurfaceContext.h"
-#include "GrSurfaceProxy.h"
-#include "GrTexture.h"
+#include "GrTextureProxy.h"
+#include "ProxyUtils.h"
 
 #include "SkUtils.h"
 
@@ -23,11 +22,6 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(CopySurface, reporter, ctxInfo) {
     static const int kW = 10;
     static const int kH = 10;
     static const size_t kRowBytes = sizeof(uint32_t) * kW;
-
-    GrSurfaceDesc baseDesc;
-    baseDesc.fConfig = kRGBA_8888_GrPixelConfig;
-    baseDesc.fWidth = kW;
-    baseDesc.fHeight = kH;
 
     SkAutoTMalloc<uint32_t> srcPixels(kW * kH);
     for (int i = 0; i < kW * kH; ++i) {
@@ -62,28 +56,16 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(CopySurface, reporter, ctxInfo) {
 
     for (auto sOrigin : {kBottomLeft_GrSurfaceOrigin, kTopLeft_GrSurfaceOrigin}) {
         for (auto dOrigin : {kBottomLeft_GrSurfaceOrigin, kTopLeft_GrSurfaceOrigin}) {
-            for (auto sFlags: {kRenderTarget_GrSurfaceFlag, kNone_GrSurfaceFlags}) {
-                for (auto dFlags: {kRenderTarget_GrSurfaceFlag, kNone_GrSurfaceFlags}) {
+            for (auto sRT : {true, false}) {
+                for (auto dRT : {true, false}) {
                     for (auto srcRect : kSrcRects) {
                         for (auto dstPoint : kDstPoints) {
-                            GrSurfaceDesc srcDesc = baseDesc;
-                            srcDesc.fOrigin = sOrigin;
-                            srcDesc.fFlags = sFlags;
-                            GrSurfaceDesc dstDesc = baseDesc;
-                            dstDesc.fOrigin = dOrigin;
-                            dstDesc.fFlags = dFlags;
-
-                            sk_sp<GrTextureProxy> src(GrSurfaceProxy::MakeDeferred(
-                                                                    context->resourceProvider(),
-                                                                    srcDesc, SkBudgeted::kNo,
-                                                                    srcPixels.get(),
-                                                                    kRowBytes));
-
-                            sk_sp<GrTextureProxy> dst(GrSurfaceProxy::MakeDeferred(
-                                                                    context->resourceProvider(),
-                                                                    dstDesc, SkBudgeted::kNo,
-                                                                    dstPixels.get(),
-                                                                    kRowBytes));
+                            auto src = sk_gpu_test::MakeTextureProxyFromData(
+                                    context, sRT, kW, kH, ii.colorType(), sOrigin, srcPixels.get(),
+                                    kRowBytes);
+                            auto dst = sk_gpu_test::MakeTextureProxyFromData(
+                                    context, dRT, kW, kH, ii.colorType(), dOrigin, dstPixels.get(),
+                                    kRowBytes);
                             if (!src || !dst) {
                                 ERRORF(reporter,
                                        "Could not create surfaces for copy surface test.");
@@ -91,8 +73,7 @@ DEF_GPUTEST_FOR_RENDERING_CONTEXTS(CopySurface, reporter, ctxInfo) {
                             }
 
                             sk_sp<GrSurfaceContext> dstContext =
-                                   context->contextPriv().makeWrappedSurfaceContext(std::move(dst),
-                                                                                    nullptr);
+                                   context->contextPriv().makeWrappedSurfaceContext(std::move(dst));
 
                             bool result = dstContext->copy(src.get(), srcRect, dstPoint);
 

@@ -24,15 +24,13 @@ protected:
     void onOnceBeforeDraw() override {
         const int pointSize = 24;
         textHeight = SkIntToScalar(pointSize);
-        fProp = SkTypeface::MakeFromName(sk_tool_utils::platform_font_name("sans-serif"),
-                SkFontStyle());
-        fMono = SkTypeface::MakeFromName(sk_tool_utils::platform_font_name("monospace"),
-                SkFontStyle());
+        fProp = SkTypeface::MakeFromName("sans-serif", SkFontStyle());
+        fMono = SkTypeface::MakeFromName("monospace",  SkFontStyle());
     }
 
     SkString onShortName() override {
         SkString name("verttext2");
-        name.append(sk_tool_utils::major_platform_os_name());
+        name.append(sk_tool_utils::platform_font_manager());
         return name;
     }
 
@@ -76,7 +74,7 @@ protected:
         paint.setTypeface(std::move(family));
         paint.setTextSize(textHeight);
 
-        canvas->drawText(string.c_str(), string.size(), y,
+        canvas->drawString(string, y,
                 SkIntToScalar(alignment == SkPaint::kLeft_Align ? 10 : 240),
                 paint);
         y += textHeight;

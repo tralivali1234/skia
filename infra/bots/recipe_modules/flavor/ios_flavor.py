@@ -9,12 +9,32 @@ import default_flavor
 import gn_flavor
 import os
 
-# Infra step failures interact really annoyingly with swarming retries.
-kInfraStep = False
-
 class iOSFlavorUtils(gn_flavor.GNFlavorUtils):
 
   def install(self):
+    # Set up the device
+    self.m.run(self.m.step, 'setup_device', cmd=['ios.py'], infra_step=True)
+
+    # Install the app.
+    for app_name in ['dm', 'nanobench']:
+      app_package = self.m.vars.skia_out.join(self.m.vars.configuration,
+                                              '%s.app' % app_name)
+
+      def uninstall_app(attempt):
+        # If app ID changes, upgrade will fail, so try uninstalling.
+        self.m.run(self.m.step,
+                   'uninstall_' + app_name,
+                   cmd=['ideviceinstaller', '-U', 'com.google.%s' % app_name],
+                   infra_step=True,
+                   # App may not be installed.
+                   abort_on_failure=False, fail_build_on_failure=False)
+
+      num_attempts = 2
+      self.m.run.with_retry(self.m.step, 'install_' + app_name, num_attempts,
+                            cmd=['ideviceinstaller', '-i', app_package],
+                            between_attempts_fn=uninstall_app,
+                            infra_step=True)
+
     self.device_dirs = default_flavor.DeviceDirs(
         dm_dir='dm',
         perf_data_dir='perf',
@@ -24,30 +44,18 @@ class iOSFlavorUtils(gn_flavor.GNFlavorUtils):
         svg_dir='svgs',
         tmp_dir='tmp')
 
-  def compile(self, unused_target, **kwargs):
-    """ Build Skia with GN and sign the iOS apps"""
-    # Use the generic compile sets.
-    super(iOSFlavorUtils, self).compile(unused_target, **kwargs)
-
-    # Sign the apps.
-    for app in ['dm', 'nanobench']:
-      self._py('package ' + app,
-              self.m.vars.skia_dir.join('gn', 'package_ios.py'),
-              args=[self.out_dir.join(app)])
-
   def step(self, name, cmd, env=None, **kwargs):
-    app = self.m.vars.skia_out.join(self.m.vars.configuration, cmd[0])
-
-    self._run(name,
-              ['ios-deploy', '-b', '%s.app' % app,
-               '-I', '--args', ' '.join(map(str, cmd[1:]))])
+    bundle_id = 'com.google.%s' % cmd[0]
+    self.m.run(self.m.step, name,
+               cmd=['idevice-app-runner', '-s', bundle_id, '--args'] +
+                    map(str, cmd[1:]))
 
   def _run_ios_script(self, script, first, *rest):
     full = self.m.vars.skia_dir.join('platform_tools/ios/bin/ios_' + script)
     self.m.run(self.m.step,
                name = '%s %s' % (script, first),
                cmd = [full, first] + list(rest),
-               infra_step=kInfraStep)
+               infra_step=True)
 
   def copy_file_to_device(self, host, device):
     self._run_ios_script('push_file', host, device)
@@ -71,6 +79,6 @@ class iOSFlavorUtils(gn_flavor.GNFlavorUtils):
                     name = 'cat_file %s' % path,
                     cmd = [full, path],
                     stdout=self.m.raw_io.output(),
-                    infra_step=kInfraStep,
+                    infra_step=True,
                     **kwargs)
     return rv.stdout.rstrip() if rv and rv.stdout else None

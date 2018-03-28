@@ -108,7 +108,7 @@ static void test_mipmap_notify(skiatest::Reporter* reporter, SkResourceCache* ca
 
 #include "SkDiscardableMemoryPool.h"
 
-static SkDiscardableMemoryPool* gPool = 0;
+static SkDiscardableMemoryPool* gPool = nullptr;
 static SkDiscardableMemory* pool_factory(size_t bytes) {
     SkASSERT(gPool);
     return gPool->create(bytes);
@@ -127,7 +127,7 @@ DEF_TEST(BitmapCache_discarded_bitmap, reporter) {
         testBitmapCache_discarded_bitmap(reporter, &cache, nullptr);
     }
     {
-        sk_sp<SkDiscardableMemoryPool> pool(SkDiscardableMemoryPool::Create(byteLimit, nullptr));
+        sk_sp<SkDiscardableMemoryPool> pool(SkDiscardableMemoryPool::Make(byteLimit));
         gPool = pool.get();
         SkResourceCache::DiscardableFactory factory = pool_factory;
         SkResourceCache cache(factory);

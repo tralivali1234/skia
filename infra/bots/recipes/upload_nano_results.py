@@ -7,7 +7,8 @@
 
 
 DEPS = [
-  'build/file',
+  'recipe_engine/context',
+  'recipe_engine/file',
   'recipe_engine/path',
   'recipe_engine/properties',
   'recipe_engine/step',
@@ -22,12 +23,12 @@ def RunSteps(api):
   now = api.time.utcnow()
   src_path = api.path['start_dir'].join(
       'perfdata', builder_name, 'data')
-  with api.step.context({'cwd': src_path}):
-    results = api.file.glob(
+  with api.context(cwd=src_path):
+    results = api.file.glob_paths(
         'find results',
-        src_path.join('*.json'),
-        test_data=[src_path.join('nanobench_abc123.json')],
-        infra_step=True)
+        src_path,
+        '*.json',
+        test_data=['nanobench_abc123.json'])
   if len(results) != 1:  # pragma: nocover
     raise Exception('Unable to find nanobench or skpbench JSON file!')
 
@@ -53,7 +54,7 @@ def RunSteps(api):
 
 
 def GenTests(api):
-  builder = 'Test-Ubuntu-GCC-GCE-CPU-AVX2-x86_64-Debug'
+  builder = 'Perf-Debian9-GCC-GCE-CPU-AVX2-x86_64-All-Debug'
   yield (
     api.test('normal_bot') +
     api.properties(buildername=builder,
@@ -62,7 +63,6 @@ def GenTests(api):
                    path_config='kitchen')
   )
 
-  builder = 'Test-Ubuntu-GCC-GCE-CPU-AVX2-x86_64-Debug'
   yield (
     api.test('trybot') +
     api.properties(buildername=builder,

@@ -11,6 +11,9 @@
 #include "SkPictureImageFilter.h"
 #include "SkPictureRecorder.h"
 
+#include "SkImage.h"
+#include "SkImageSource.h"
+
 // This GM exercises the SkPictureImageFilter ImageFilter class.
 
 static void fill_rect_filtered(SkCanvas* canvas,
@@ -33,7 +36,7 @@ static sk_sp<SkPicture> make_picture() {
     paint.setColor(0xFFFFFFFF);
     paint.setTextSize(SkIntToScalar(96));
     const char* str = "e";
-    canvas->drawText(str, strlen(str), SkIntToScalar(20), SkIntToScalar(70), paint);
+    canvas->drawString(str, SkIntToScalar(20), SkIntToScalar(70), paint);
     return recorder.finishRecordingAsPicture();
 }
 
@@ -50,7 +53,7 @@ static sk_sp<SkPicture> make_LCD_picture() {
     // this has to be small enough that it doesn't become a path
     paint.setTextSize(SkIntToScalar(36));
     const char* str = "e";
-    canvas->drawText(str, strlen(str), SkIntToScalar(20), SkIntToScalar(70), paint);
+    canvas->drawString(str, SkIntToScalar(20), SkIntToScalar(70), paint);
     return recorder.finishRecordingAsPicture();
 }
 
@@ -70,6 +73,16 @@ protected:
         fLCDPicture = make_LCD_picture();
     }
 
+    sk_sp<SkImageFilter> make(sk_sp<SkPicture> pic, SkRect r, SkFilterQuality fq) {
+        SkISize dim = { SkScalarRoundToInt(r.width()), SkScalarRoundToInt(r.height()) };
+        auto img = SkImage::MakeFromPicture(pic, dim, nullptr, nullptr,
+                                            SkImage::BitDepth::kU8, SkColorSpace::MakeSRGB());
+        return SkImageSource::Make(img, r, r, fq);
+    }
+    sk_sp<SkImageFilter> make(SkFilterQuality fq) {
+        return make(fPicture, fPicture->cullRect(), fq);
+    }
+
     void onDraw(SkCanvas* canvas) override {
         canvas->clear(SK_ColorGRAY);
         {
@@ -81,14 +94,8 @@ protected:
                                                                                  srcRect));
             sk_sp<SkImageFilter> pictureSourceEmptyRect(SkPictureImageFilter::Make(fPicture,
                                                                                    emptyRect));
-            sk_sp<SkImageFilter> pictureSourceResampled(SkPictureImageFilter::MakeForLocalSpace(
-                                                                           fPicture,
-                                                                           fPicture->cullRect(),
-                                                                           kLow_SkFilterQuality));
-            sk_sp<SkImageFilter> pictureSourcePixelated(SkPictureImageFilter::MakeForLocalSpace(
-                                                                           fPicture,
-                                                                           fPicture->cullRect(),
-                                                                           kNone_SkFilterQuality));
+            sk_sp<SkImageFilter> pictureSourceResampled = make(kLow_SkFilterQuality);
+            sk_sp<SkImageFilter> pictureSourcePixelated = make(kNone_SkFilterQuality);
 
             canvas->save();
             // Draw the picture unscaled.
@@ -111,10 +118,7 @@ protected:
                 canvas->drawRect(bounds, stroke);
 
                 SkPaint paint;
-                paint.setImageFilter(SkPictureImageFilter::MakeForLocalSpace(
-                                                                        fLCDPicture,
-                                                                        fPicture->cullRect(),
-                                                                        kNone_SkFilterQuality));
+                paint.setImageFilter(make(fLCDPicture, fPicture->cullRect(), kNone_SkFilterQuality));
 
                 canvas->scale(4, 4);
                 canvas->translate(-0.9f*srcRect.fLeft, -2.45f*srcRect.fTop);

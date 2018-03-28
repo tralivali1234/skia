@@ -8,9 +8,8 @@
 #ifndef GrRenderTargetProxy_DEFINED
 #define GrRenderTargetProxy_DEFINED
 
-#include "GrRenderTarget.h"
 #include "GrSurfaceProxy.h"
-#include "GrTypes.h"
+#include "GrTypesPriv.h"
 
 class GrResourceProvider;
 
@@ -24,61 +23,75 @@ public:
     const GrRenderTargetProxy* asRenderTargetProxy() const override { return this; }
 
     // Actually instantiate the backing rendertarget, if necessary.
-    GrRenderTarget* instantiate(GrResourceProvider* resourceProvider);
+    bool instantiate(GrResourceProvider*) override;
 
-    bool isStencilBufferMultisampled() const { return fDesc.fSampleCnt > 0; }
+    GrFSAAType fsaaType() const {
+        if (fSampleCnt <= 1) {
+            SkASSERT(!this->hasMixedSamples());
+            return GrFSAAType::kNone;
+        }
+        return this->hasMixedSamples() ? GrFSAAType::kMixedSamples : GrFSAAType::kUnifiedMSAA;
+    }
+
+    /*
+     * When instantiated does this proxy require a stencil buffer?
+     */
+    void setNeedsStencil() { fNeedsStencil = true; }
+    bool needsStencil() const { return fNeedsStencil; }
 
     /**
-     * For our purposes, "Mixed Sampled" means the stencil buffer is multisampled but the color
-     * buffer is not.
+     * Returns the number of samples/pixel in the stencil buffer (One if non-MSAA).
      */
-    bool isMixedSampled() const { return fRenderTargetFlags & GrRenderTarget::Flags::kMixedSampled; }
+    int numStencilSamples() const { return fSampleCnt; }
 
     /**
-     * "Unified Sampled" means the stencil and color buffers are both multisampled.
+     * Returns the number of samples/pixel in the color buffer (One if non-MSAA or mixed sampled).
      */
-    bool isUnifiedMultisampled() const { return fDesc.fSampleCnt > 0 && !this->isMixedSampled(); }
-
-    /**
-     * Returns the number of samples/pixel in the stencil buffer (Zero if non-MSAA).
-     */
-    int numStencilSamples() const { return fDesc.fSampleCnt; }
-
-    /**
-     * Returns the number of samples/pixel in the color buffer (Zero if non-MSAA or mixed sampled).
-     */
-    int numColorSamples() const { return this->isMixedSampled() ? 0 : fDesc.fSampleCnt; }
+    int numColorSamples() const {
+        return GrFSAAType::kMixedSamples == this->fsaaType() ? 1 : fSampleCnt;
+    }
 
     int maxWindowRectangles(const GrCaps& caps) const;
-
-    GrRenderTarget::Flags testingOnly_getFlags() const;
 
     // TODO: move this to a priv class!
     bool refsWrappedObjects() const;
 
 protected:
-    friend class GrSurfaceProxy;  // for ctors
+    friend class GrProxyProvider;  // for ctors
 
     // Deferred version
-    GrRenderTargetProxy(const GrCaps&, const GrSurfaceDesc&,
-                        SkBackingFit, SkBudgeted, uint32_t flags);
+    GrRenderTargetProxy(const GrCaps&, const GrSurfaceDesc&, GrSurfaceOrigin, SkBackingFit,
+                        SkBudgeted, GrInternalSurfaceFlags);
+
+    // Lazy-callback version
+    // There are two main use cases for lazily-instantiated proxies:
+    //   basic knowledge - width, height, config, samples, origin are known
+    //   minimal knowledge - only config is known.
+    //
+    // The basic knowledge version is used for DDL where we know the type of proxy we are going to
+    // use, but we don't have access to the GPU yet to instantiate it.
+    //
+    // The minimal knowledge version is used for CCPR where we are generating an atlas but we do not
+    // know the final size until flush time.
+    GrRenderTargetProxy(LazyInstantiateCallback&&, LazyInstantiationType lazyType,
+                        const GrSurfaceDesc&, GrSurfaceOrigin, SkBackingFit, SkBudgeted,
+                        GrInternalSurfaceFlags);
 
     // Wrapped version
-    GrRenderTargetProxy(sk_sp<GrSurface>);
+    GrRenderTargetProxy(sk_sp<GrSurface>, GrSurfaceOrigin);
+
+    sk_sp<GrSurface> createSurface(GrResourceProvider*) const override;
 
 private:
-    size_t onGpuMemorySize() const override;
+    size_t onUninstantiatedGpuMemorySize() const override;
+    SkDEBUGCODE(void validateLazySurface(const GrSurface*) override;)
+
+    int                 fSampleCnt;
+    bool                fNeedsStencil;
 
     // For wrapped render targets the actual GrRenderTarget is stored in the GrIORefProxy class.
     // For deferred proxies that pointer is filled in when we need to instantiate the
     // deferred resource.
-
-    // These don't usually get computed until the render target is instantiated, but the render
-    // target proxy may need to answer queries about it before then. And since in the deferred case
-    // we know the newly created render target will be internal, we are able to precompute what the
-    // flags will ultimately end up being. In the wrapped case we just copy the wrapped
-    // rendertarget's info here.
-    GrRenderTarget::Flags   fRenderTargetFlags;
 
     typedef GrSurfaceProxy INHERITED;
 };

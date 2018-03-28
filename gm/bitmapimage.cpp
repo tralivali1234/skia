@@ -8,6 +8,7 @@
 #include "gm.h"
 #include "Resources.h"
 #include "SkCodec.h"
+#include "SkImage.h"
 
 namespace skiagm {
 
@@ -27,7 +28,7 @@ protected:
 
     void onDraw(SkCanvas* canvas) override {
         // Create image.
-        const char* path = "mandrill_512_q075.jpg";
+        const char* path = "images/mandrill_512_q075.jpg";
         sk_sp<SkImage> image = GetResourceAsImage(path);
         if (!image) {
             SkDebugf("Failure: Is the resource path set properly?");
@@ -35,7 +36,7 @@ protected:
         }
 
         // Create matching bitmap.
-        std::unique_ptr<SkCodec> codec(SkCodec::NewFromStream(GetResourceAsStream(path)));
+        std::unique_ptr<SkCodec> codec(SkCodec::MakeFromStream(GetResourceAsStream(path)));
         SkBitmap bitmap;
         bitmap.allocPixels(codec->getInfo());
         codec->getPixels(codec->getInfo(), bitmap.getPixels(), bitmap.rowBytes());

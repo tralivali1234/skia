@@ -19,6 +19,7 @@
 #include "SkColorPriv.h"
 #include "SkColorFilter.h"
 #include "SkDither.h"
+#include "sk_tool_utils.h"
 
 static void draw_sweep(SkCanvas* c, int width, int height, SkScalar angle) {
     SkRect  r;
@@ -111,7 +112,7 @@ public:
         make_bm(&fBM);
         make_bm(&fBMPreDither);
         pre_dither(fBMPreDither);
-        fBM.copyTo(&fBM16, kARGB_4444_SkColorType);
+        sk_tool_utils::copy_to(&fBM16, kARGB_4444_SkColorType, fBM);
 
         fAngle = 0;
 
@@ -158,7 +159,6 @@ protected:
         draw_sweep(canvas, fBM.width()>>2, fBM.height()>>2, fAngle);
 
         fAngle += SK_Scalar1/2;
-        this->inval(nullptr);
     }
 
 private:

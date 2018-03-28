@@ -12,6 +12,8 @@
 #if SK_SUPPORT_GPU
 
 #include "GrContext.h"
+#include "GrContextPriv.h"
+#include "GrProxyProvider.h"
 #include "GrRenderTargetContextPriv.h"
 #include "SkBitmap.h"
 #include "SkGr.h"
@@ -85,15 +87,15 @@ protected:
             return;
         }
 
+        GrProxyProvider* proxyProvider = context->contextPriv().proxyProvider();
         GrSurfaceDesc desc;
         desc.fWidth = fBmp.width();
         desc.fHeight = fBmp.height();
         desc.fConfig = SkImageInfo2GrPixelConfig(fBmp.info(), *context->caps());
+        SkASSERT(kUnknown_GrPixelConfig != desc.fConfig);
 
-        sk_sp<GrTextureProxy> proxy(GrSurfaceProxy::MakeDeferred(context->resourceProvider(),
-                                                                 desc, SkBudgeted::kYes,
-                                                                 fBmp.getPixels(),
-                                                                 fBmp.rowBytes()));
+        sk_sp<GrTextureProxy> proxy = proxyProvider->createTextureProxy(
+                desc, SkBudgeted::kYes, fBmp.getPixels(), fBmp.rowBytes());
         if (!proxy) {
             return;
         }
@@ -121,23 +123,19 @@ protected:
                     GrTextureDomain::Mode mode = (GrTextureDomain::Mode) m;
                     GrPaint grPaint;
                     grPaint.setXPFactory(GrPorterDuffXPFactory::Get(SkBlendMode::kSrc));
-                    sk_sp<GrFragmentProcessor> fp(
-                        GrTextureDomainEffect::Make(
-                                   context->resourceProvider(), proxy,
-                                   nullptr, textureMatrices[tm],
-                                   GrTextureDomain::MakeTexelDomainForMode(texelDomains[d], mode),
-                                   mode, GrSamplerParams::kNone_FilterMode));
+                    auto fp = GrTextureDomainEffect::Make(
+                            proxy, textureMatrices[tm],
+                            GrTextureDomain::MakeTexelDomainForMode(texelDomains[d], mode), mode,
+                            GrSamplerState::Filter::kNearest);
 
                     if (!fp) {
                         continue;
                     }
                     const SkMatrix viewMatrix = SkMatrix::MakeTrans(x, y);
                     grPaint.addColorFragmentProcessor(std::move(fp));
-
-                    std::unique_ptr<GrLegacyMeshDrawOp> op(GrRectOpFactory::MakeNonAAFill(
-                            GrColor_WHITE, viewMatrix, renderRect, nullptr, nullptr));
-                    renderTargetContext->priv().testingOnly_addLegacyMeshDrawOp(
-                            std::move(grPaint), GrAAType::kNone, std::move(op));
+                    renderTargetContext->priv().testingOnly_addDrawOp(
+                            GrRectOpFactory::MakeNonAAFill(std::move(grPaint), viewMatrix,
+                                                           renderRect, GrAAType::kNone));
                     x += renderRect.width() + kTestPad;
                 }
                 y += renderRect.height() + kTestPad;

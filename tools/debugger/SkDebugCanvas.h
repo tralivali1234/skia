@@ -165,23 +165,8 @@ public:
 
     Json::Value toJSONOpList(int n, SkCanvas*);
 
-    ////////////////////////////////////////////////////////////////////////////////
-    // Inherited from SkCanvas
-    ////////////////////////////////////////////////////////////////////////////////
-
-    static const int kVizImageHeight = 256;
-    static const int kVizImageWidth = 256;
-
-    bool isClipEmpty() const override { return false; }
-
-    bool isClipRect() const override { return true; }
-
-    SkRect onGetLocalClipBounds() const override {
-        return SkRect::MakeIWH(this->imageInfo().width(), this->imageInfo().height());
-    }
-
-    SkIRect onGetDeviceClipBounds() const override {
-        return SkIRect::MakeWH(this->imageInfo().width(), this->imageInfo().height());
+    void detachCommands(SkTDArray<SkDrawCommand*>* dst) {
+        fCommandVector.swap(*dst);
     }
 
 protected:
@@ -194,12 +179,6 @@ protected:
     void didConcat(const SkMatrix &) override;
 
     void didSetMatrix(const SkMatrix &) override;
-
-#ifdef SK_EXPERIMENTAL_SHADOWING
-    void didTranslateZ(SkScalar) override;
-#else
-    void didTranslateZ(SkScalar);
-#endif
 
     void onDrawAnnotation(const SkRect&, const char[], SkData*) override;
     void onDrawDRRect(const SkRRect&, const SkRRect&, const SkPaint&) override;
@@ -227,6 +206,7 @@ protected:
     void onDrawPoints(PointMode, size_t count, const SkPoint pts[], const SkPaint&) override;
     void onDrawVerticesObject(const SkVertices*, SkBlendMode, const SkPaint&) override;
     void onDrawPath(const SkPath&, const SkPaint&) override;
+    void onDrawRegion(const SkRegion&, const SkPaint&) override;
     void onDrawBitmap(const SkBitmap&, SkScalar left, SkScalar top, const SkPaint*) override;
     void onDrawBitmapRect(const SkBitmap&, const SkRect* src, const SkRect& dst, const SkPaint*,
                           SrcRectConstraint) override;
@@ -237,24 +217,14 @@ protected:
                          const SkPaint*, SrcRectConstraint) override;
     void onDrawBitmapNine(const SkBitmap&, const SkIRect& center, const SkRect& dst,
                           const SkPaint*) override;
+    void onDrawImageNine(const SkImage*, const SkIRect& center, const SkRect& dst,
+                         const SkPaint*) override;
     void onClipRect(const SkRect&, SkClipOp, ClipEdgeStyle) override;
     void onClipRRect(const SkRRect&, SkClipOp, ClipEdgeStyle) override;
     void onClipPath(const SkPath&, SkClipOp, ClipEdgeStyle) override;
     void onClipRegion(const SkRegion& region, SkClipOp) override;
 
     void onDrawPicture(const SkPicture*, const SkMatrix*, const SkPaint*) override;
-
-#ifdef SK_EXPERIMENTAL_SHADOWING
-    void onDrawShadowedPicture(const SkPicture*,
-                               const SkMatrix*,
-                               const SkPaint*,
-                               const SkShadowParams& params) override;
-#else
-    void onDrawShadowedPicture(const SkPicture*,
-                               const SkMatrix*,
-                               const SkPaint*,
-                               const SkShadowParams& params);
-#endif
 
     void markActiveCommands(int index);
 
@@ -284,7 +254,7 @@ private:
     SkTDArray<SkDrawCommand*> fActiveLayers;
 
     /**
-        Adds the command to the classes vector of commands.
+        Adds the command to the class' vector of commands.
         @param command  The draw command for execution
      */
     void addDrawCommand(SkDrawCommand* command);

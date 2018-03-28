@@ -10,6 +10,7 @@
 
 #include "SkColorFilter.h"
 #include "SkMultiPictureDraw.h"
+#include "SkPath.h"
 #include "SkPictureRecorder.h"
 #include "SkSurface.h"
 
@@ -240,12 +241,7 @@ static sk_sp<SkPicture> make_sierpinski_picture() {
 static sk_sp<SkSurface> create_compat_surface(SkCanvas* canvas, int width, int height) {
     SkImageInfo info = SkImageInfo::MakeN32Premul(width, height);
 
-    auto surface = canvas->makeSurface(info);
-    if (nullptr == surface) {
-        // picture canvas returns nullptr so fall back to raster
-        surface = SkSurface::MakeRaster(info);
-    }
-    return surface;
+    return sk_tool_utils::makeSurface(canvas, info);
 }
 
 // This class stores the information required to compose all the result

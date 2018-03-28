@@ -4,8 +4,10 @@
  * Use of this source code is governed by a BSD-style license that can be
  * found in the LICENSE file.
  */
+
 #include "SampleCode.h"
 #include "SkView.h"
+#include "SkBitmap.h"
 #include "SkCanvas.h"
 #include "SkPaint.h"
 #include "SkPath.h"
@@ -111,7 +113,7 @@ protected:
                     str.printf("[%s,%s]", gModeNames[kx], gModeNames[ky]);
 
                     p.setTextAlign(SkPaint::kCenter_Align);
-                    textCanvas->drawText(str.c_str(), str.size(), x + r.width()/2, y, p);
+                    textCanvas->drawString(str, x + r.width()/2, y, p);
 
                     x += r.width() * 4 / 3;
                 }
@@ -143,7 +145,7 @@ protected:
                     p.setAntiAlias(true);
                     p.setLooper(fLooper);
                     str.printf("%s, %s", gConfigNames[i], gFilterNames[j]);
-                    textCanvas->drawText(str.c_str(), str.size(), x, y + r.height() * 2 / 3, p);
+                    textCanvas->drawString(str, x, y + r.height() * 2 / 3, p);
                 }
 
                 y += r.height() * 4 / 3;

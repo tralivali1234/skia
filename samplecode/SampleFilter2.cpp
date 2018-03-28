@@ -9,15 +9,16 @@
 #include "SampleCode.h"
 #include "SkView.h"
 #include "SkCanvas.h"
+#include "SkColorFilter.h"
+#include "SkColorPriv.h"
 #include "SkGradientShader.h"
 #include "SkGraphics.h"
 #include "SkPath.h"
 #include "SkRegion.h"
 #include "SkShader.h"
-#include "SkUtils.h"
-#include "SkColorPriv.h"
-#include "SkColorFilter.h"
+#include "SkString.h"
 #include "SkTime.h"
+#include "SkUtils.h"
 
 static const char* gNames[] = {
     "/skimages/background_01.png"
@@ -89,7 +90,7 @@ protected:
                         s.appendS32(paint.isDither());
                         s.append(" filter=");
                         s.appendS32(paint.getFilterQuality() != kNone_SkFilterQuality);
-                        canvas->drawText(s.c_str(), s.size(), x + W/2,
+                        canvas->drawString(s, x + W/2,
                                          y - p.getTextSize(), p);
                     }
                     if (k+j == 2) {
@@ -99,7 +100,7 @@ protected:
                         SkString s;
                         s.append(" depth=");
                         s.appendS32(fBitmaps[i].colorType() == kRGB_565_SkColorType ? 16 : 32);
-                        canvas->drawText(s.c_str(), s.size(), x + W + SkIntToScalar(4),
+                        canvas->drawString(s, x + W + SkIntToScalar(4),
                                          y + H/2, p);
                     }
                 }

@@ -73,8 +73,7 @@ void SkJSCanvas::stroke() {
 }
 
 void SkJSCanvas::fillText(const char text[], double x, double y) {
-    fTarget->drawText(text, strlen(text),
-                      SkDoubleToScalar(x), SkDoubleToScalar(y), fFillPaint);
+    fTarget->drawString(text, SkDoubleToScalar(x), SkDoubleToScalar(y), fFillPaint);
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -225,7 +224,7 @@ protected:
     }
 
     void onOnceBeforeDraw() override {
-        fEmFace = MakeResourceAsTypeface("/fonts/Em.ttf");
+        fEmFace = MakeResourceAsTypeface("fonts/Em.ttf");
     }
 
     void onDraw(SkCanvas* canvas) override {

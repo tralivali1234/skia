@@ -5,7 +5,6 @@
  * found in the LICENSE file.
  */
 
-
 #ifndef GrSurface_DEFINED
 #define GrSurface_DEFINED
 
@@ -23,23 +22,17 @@ public:
     /**
      * Retrieves the width of the surface.
      */
-    int width() const { return fDesc.fWidth; }
+    int width() const { return fWidth; }
 
     /**
      * Retrieves the height of the surface.
      */
-    int height() const { return fDesc.fHeight; }
+    int height() const { return fHeight; }
 
     /**
      * Helper that gets the width and height of the surface as a bounding rectangle.
      */
     SkRect getBoundsRect() const { return SkRect::MakeIWH(this->width(), this->height()); }
-
-    GrSurfaceOrigin origin() const {
-        SkASSERT(kTopLeft_GrSurfaceOrigin == fDesc.fOrigin ||
-                 kBottomLeft_GrSurfaceOrigin == fDesc.fOrigin);
-        return fDesc.fOrigin;
-    }
 
     /**
      * Retrieves the pixel config specified when the surface was created.
@@ -47,12 +40,7 @@ public:
      * if client asked us to render to a target that has a pixel
      * config that isn't equivalent with one of our configs.
      */
-    GrPixelConfig config() const { return fDesc.fConfig; }
-
-    /**
-     * Return the descriptor describing the surface
-     */
-    const GrSurfaceDesc& desc() const { return fDesc; }
+    GrPixelConfig config() const { return fConfig; }
 
     /**
      * @return the texture associated with the surface, may be null.
@@ -71,10 +59,38 @@ public:
     inline const GrSurfacePriv surfacePriv() const;
 
     static size_t WorstCaseSize(const GrSurfaceDesc& desc, bool useNextPow2 = false);
-    static size_t ComputeSize(const GrSurfaceDesc& desc, int colorSamplesPerPixel,
-                              bool hasMIPMaps, bool useNextPow2 = false);
+    static size_t ComputeSize(GrPixelConfig config, int width, int height, int colorSamplesPerPixel,
+                              GrMipMapped, bool useNextPow2 = false);
 
 protected:
+    void setDoesNotSupportMipMaps() {
+        SkASSERT(this->asTexture());
+        fSurfaceFlags |= GrInternalSurfaceFlags::kDoesNotSupportMipMaps;
+    }
+    bool doesNotSupportMipMaps() const {
+        return fSurfaceFlags & GrInternalSurfaceFlags::kDoesNotSupportMipMaps;
+    }
+
+    void setIsClampOnly() {
+        SkASSERT(this->asTexture());
+        fSurfaceFlags |= GrInternalSurfaceFlags::kIsClampOnly;
+    }
+    bool isClampOnly() const { return fSurfaceFlags & GrInternalSurfaceFlags::kIsClampOnly; }
+
+    void setHasMixedSamples() {
+        SkASSERT(this->asRenderTarget());
+        fSurfaceFlags |= GrInternalSurfaceFlags::kMixedSampled;
+    }
+    bool hasMixedSamples() const { return fSurfaceFlags & GrInternalSurfaceFlags::kMixedSampled; }
+
+    void setSupportsWindowRects() {
+        SkASSERT(this->asRenderTarget());
+        fSurfaceFlags |= GrInternalSurfaceFlags::kWindowRectsSupport;
+    }
+    bool supportsWindowRects() const {
+        return fSurfaceFlags & GrInternalSurfaceFlags::kWindowRectsSupport;
+    }
+
     // Methods made available via GrSurfacePriv
     bool hasPendingRead() const;
     bool hasPendingWrite() const;
@@ -84,17 +100,25 @@ protected:
     friend class GrSurfacePriv;
 
     GrSurface(GrGpu* gpu, const GrSurfaceDesc& desc)
-        : INHERITED(gpu)
-        , fDesc(desc) {
+            : INHERITED(gpu)
+            , fConfig(desc.fConfig)
+            , fWidth(desc.fWidth)
+            , fHeight(desc.fHeight)
+            , fSurfaceFlags(GrInternalSurfaceFlags::kNone) {
     }
+
     ~GrSurface() override {}
 
-    GrSurfaceDesc fDesc;
 
     void onRelease() override;
     void onAbandon() override;
 
 private:
+    GrPixelConfig          fConfig;
+    int                    fWidth;
+    int                    fHeight;
+    GrInternalSurfaceFlags fSurfaceFlags;
+
     typedef GrGpuResource INHERITED;
 };
 

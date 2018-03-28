@@ -17,9 +17,9 @@ namespace SkSL {
  * A block of multiple statements functioning as a single statement.
  */
 struct Block : public Statement {
-    Block(Position position, std::vector<std::unique_ptr<Statement>> statements,
-          const std::shared_ptr<SymbolTable> symbols)
-    : INHERITED(position, kBlock_Kind)
+    Block(int offset, std::vector<std::unique_ptr<Statement>> statements,
+          const std::shared_ptr<SymbolTable> symbols = nullptr)
+    : INHERITED(offset, kBlock_Kind)
     , fSymbols(std::move(symbols))
     , fStatements(std::move(statements)) {}
 

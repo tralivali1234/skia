@@ -20,10 +20,7 @@ static sk_sp<SkImage> make_atlas(SkCanvas* caller, int atlasSize) {
     const int kBlockSize = atlasSize/2;
 
     SkImageInfo info = SkImageInfo::MakeN32Premul(atlasSize, atlasSize);
-    auto surface(caller->makeSurface(info));
-    if (nullptr == surface) {
-        surface = SkSurface::MakeRaster(info);
-    }
+    auto surface(sk_tool_utils::makeSurface(caller, info));
     SkCanvas* canvas = surface->getCanvas();
 
     SkPaint paint;
@@ -138,7 +135,7 @@ protected:
 
         for (int i = 0; i < numModes; ++i) {
             const char* label = SkBlendMode_Name(gModes[i]);
-            canvas->drawText(label, strlen(label),
+            canvas->drawString(label,
                              i*(target.width()+kPad)+kPad, SkIntToScalar(kTextPad),
                              textP);
         }

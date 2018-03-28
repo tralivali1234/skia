@@ -6,6 +6,7 @@
 */
 
 #include "Benchmark.h"
+#include "SkBitmap.h"
 #include "SkCanvas.h"
 #include "SkRect.h"
 #include "SkString.h"
@@ -21,8 +22,9 @@ public:
         fLattice.fXCount = xCount;
         fLattice.fYDivs = yDivs;
         fLattice.fYCount = yCount;
-        fLattice.fFlags = nullptr;
+        fLattice.fRectTypes = nullptr;
         fLattice.fBounds = nullptr;
+        fLattice.fColors = nullptr;
 
         fName = SkStringPrintf("DrawLattice_%s", desc);
     }

@@ -9,11 +9,11 @@
 #include "Resources.h"
 #include "SkCodec.h"
 #include "SkColorSpace.h"
-#include "SkColorSpace_Base.h"
 #include "SkColorSpaceXform.h"
 #include "SkColorSpaceXformPriv.h"
 #include "SkHalf.h"
 #include "SkImage.h"
+#include "SkImageInfoPriv.h"
 #include "SkPictureRecorder.h"
 
 static void clamp_if_necessary(const SkImageInfo& info, void* pixels) {
@@ -41,7 +41,7 @@ static void clamp_if_necessary(const SkImageInfo& info, void* pixels) {
 
 sk_sp<SkColorSpace> fix_for_colortype(SkColorSpace* colorSpace, SkColorType colorType) {
     if (kRGBA_F16_SkColorType == colorType) {
-        return as_CSB(colorSpace)->makeLinearGamma();
+        return colorSpace->makeLinearGamma();
     }
 
     return sk_ref_sp(colorSpace);
@@ -51,8 +51,8 @@ static const int kWidth = 64;
 static const int kHeight = 64;
 
 static sk_sp<SkImage> make_raster_image(SkColorType colorType) {
-    std::unique_ptr<SkStream> stream(GetResourceAsStream("google_chrome.ico"));
-    std::unique_ptr<SkCodec> codec(SkCodec::NewFromStream(stream.release()));
+    std::unique_ptr<SkStream> stream(GetResourceAsStream("images/google_chrome.ico"));
+    std::unique_ptr<SkCodec> codec = SkCodec::MakeFromStream(std::move(stream));
 
     SkBitmap bitmap;
     SkImageInfo info = codec->getInfo().makeWH(kWidth, kHeight)
@@ -66,7 +66,7 @@ static sk_sp<SkImage> make_raster_image(SkColorType colorType) {
 }
 
 static sk_sp<SkImage> make_codec_image() {
-    sk_sp<SkData> encoded = GetResourceAsData("randPixels.png");
+    sk_sp<SkData> encoded = GetResourceAsData("images/randPixels.png");
     return SkImage::MakeFromEncoded(encoded);
 }
 
@@ -91,10 +91,12 @@ static sk_sp<SkImage> make_picture_image() {
                                     SkColorSpace::MakeSRGB());
 }
 
-static sk_sp<SkColorSpace> make_srgb_transfer_fn(const SkColorSpacePrimaries& primaries) {
+static sk_sp<SkColorSpace> make_parametric_transfer_fn(const SkColorSpacePrimaries& primaries) {
     SkMatrix44 toXYZD50(SkMatrix44::kUninitialized_Constructor);
     SkAssertResult(primaries.toXYZD50(&toXYZD50));
-    return SkColorSpace::MakeRGB(SkColorSpace::kSRGB_RenderTargetGamma, toXYZD50);
+    SkColorSpaceTransferFn fn;
+    fn.fA = 1.f; fn.fB = 0.f; fn.fC = 0.f; fn.fD = 0.f; fn.fE = 0.f; fn.fF = 0.f; fn.fG = 1.8f;
+    return SkColorSpace::MakeRGB(fn, toXYZD50);
 }
 
 static sk_sp<SkColorSpace> make_wide_gamut() {
@@ -108,7 +110,7 @@ static sk_sp<SkColorSpace> make_wide_gamut() {
     primaries.fBY = 0.0001f;
     primaries.fWX = 0.34567f;
     primaries.fWY = 0.35850f;
-    return make_srgb_transfer_fn(primaries);
+    return make_parametric_transfer_fn(primaries);
 }
 
 static sk_sp<SkColorSpace> make_small_gamut() {
@@ -121,7 +123,7 @@ static sk_sp<SkColorSpace> make_small_gamut() {
     primaries.fBY = 0.16f;
     primaries.fWX = 0.3127f;
     primaries.fWY = 0.3290f;
-    return make_srgb_transfer_fn(primaries);
+    return make_parametric_transfer_fn(primaries);
 }
 
 static void draw_image(SkCanvas* canvas, SkImage* image, SkColorType dstColorType,

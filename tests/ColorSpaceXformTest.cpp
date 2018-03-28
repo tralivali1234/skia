@@ -11,7 +11,6 @@
 #include "SkColorPriv.h"
 #include "SkColorSpace.h"
 #include "SkColorSpace_A2B.h"
-#include "SkColorSpace_Base.h"
 #include "SkColorSpace_XYZ.h"
 #include "SkColorSpaceXform_Base.h"
 #include "Test.h"
@@ -50,7 +49,6 @@ public:
         srcElements.push_back(SkColorSpace_A2B::Element(arbitraryMatrix));
         auto srcSpace =
                 ColorSpaceXformTest::CreateA2BSpace(SkColorSpace_A2B::PCS::kXYZ,
-                                                    SkColorSpace_Base::kRGB_ICCTypeFlag,
                                                     std::move(srcElements));
         sk_sp<SkColorSpace> dstSpace(new SkColorSpace_XYZ(gammaNamed, gammas, arbitraryMatrix,
                                                           nullptr));
@@ -60,9 +58,9 @@ public:
     }
 
     static sk_sp<SkColorSpace> CreateA2BSpace(SkColorSpace_A2B::PCS pcs,
-                                              SkColorSpace_Base::ICCTypeFlag iccType,
                                               std::vector<SkColorSpace_A2B::Element> elements) {
-        return sk_sp<SkColorSpace>(new SkColorSpace_A2B(iccType, std::move(elements),
+        return sk_sp<SkColorSpace>(new SkColorSpace_A2B(SkColorSpace::kRGB_Type,
+                                                        std::move(elements),
                                                         pcs, nullptr));
     }
 };
@@ -109,6 +107,12 @@ static void test_identity_xform(skiatest::Reporter* r, const sk_sp<SkGammas>& ga
 
 static void test_identity_xform_A2B(skiatest::Reporter* r, SkGammaNamed gammaNamed,
                                     const sk_sp<SkGammas>& gammas, int tol=1) {
+#if defined(SK_USE_SKCMS)
+    (void)r;
+    (void)gammaNamed;
+    (void)gammas;
+    (void)tol;
+#else
     // Arbitrary set of 10 pixels
     constexpr int width = 10;
     constexpr uint32_t srcPixels[width] = {
@@ -135,6 +139,7 @@ static void test_identity_xform_A2B(skiatest::Reporter* r, SkGammaNamed gammaNam
         REPORTER_ASSERT(r, almost_equal(((srcPixels[i] >> 24) & 0xFF),
                                         SkGetPackedA32(dstPixels[i]), tol));
     }
+#endif
 }
 
 DEF_TEST(ColorSpaceXform_TableGamma, r) {
@@ -266,6 +271,7 @@ DEF_TEST(ColorSpaceXform_NonMatchingGamma, r) {
     test_identity_xform_A2B(r, kNonStandard_SkGammaNamed, gammas, tolerance);
 }
 
+#if !defined(SK_USE_SKCMS)
 DEF_TEST(ColorSpaceXform_A2BCLUT, r) {
     constexpr int inputChannels = 3;
     constexpr int gp            = 4; // # grid points
@@ -309,7 +315,6 @@ DEF_TEST(ColorSpaceXform_A2BCLUT, r) {
     std::vector<SkColorSpace_A2B::Element> srcElements;
     srcElements.push_back(SkColorSpace_A2B::Element(std::move(colorLUT)));
     auto srcSpace = ColorSpaceXformTest::CreateA2BSpace(SkColorSpace_A2B::PCS::kXYZ,
-                                                        SkColorSpace_Base::kRGB_ICCTypeFlag,
                                                         std::move(srcElements));
     // dst space is entirely identity
     auto dstSpace = SkColorSpace::MakeRGB(SkColorSpace::kLinear_RenderTargetGamma, SkMatrix44::I());
@@ -328,14 +333,16 @@ DEF_TEST(ColorSpaceXform_A2BCLUT, r) {
                                         SkColorGetR(dstPixels[i])));
     }
 }
+#endif
 
 DEF_TEST(SkColorSpaceXform_LoadTail, r) {
     std::unique_ptr<uint64_t[]> srcPixel(new uint64_t[1]);
     srcPixel[0] = 0;
     uint32_t dstPixel;
-    sk_sp<SkColorSpace> adobe = SkColorSpace_Base::MakeNamed(SkColorSpace_Base::kAdobeRGB_Named);
+    sk_sp<SkColorSpace> p3 = SkColorSpace::MakeRGB(SkColorSpace::kSRGB_RenderTargetGamma,
+                                                   SkColorSpace::kDCIP3_D65_Gamut);
     sk_sp<SkColorSpace> srgb = SkColorSpace::MakeSRGB();
-    std::unique_ptr<SkColorSpaceXform> xform = SkColorSpaceXform::New(adobe.get(), srgb.get());
+    std::unique_ptr<SkColorSpaceXform> xform = SkColorSpaceXform::New(p3.get(), srgb.get());
 
     // ASAN will catch us if we read past the tail.
     bool success = xform->apply(SkColorSpaceXform::kRGBA_8888_ColorFormat, &dstPixel,

@@ -35,12 +35,7 @@ static SkBitmap make_chessbm(int w, int h) {
 static sk_sp<SkImage> makebm(SkCanvas* origCanvas, SkBitmap* resultBM, int w, int h) {
     SkImageInfo info = SkImageInfo::MakeN32Premul(w, h);
 
-    auto surface(origCanvas->makeSurface(info));
-    if (nullptr == surface) {
-        // picture canvas will return null, so fall-back to raster
-        surface = SkSurface::MakeRaster(info);
-    }
-
+    auto surface(sk_tool_utils::makeSurface(origCanvas, info));
     SkCanvas* canvas = surface->getCanvas();
 
     canvas->clear(SK_ColorTRANSPARENT);
@@ -84,7 +79,7 @@ static sk_sp<SkImage> makebm(SkCanvas* origCanvas, SkBitmap* resultBM, int w, in
 
     SkBitmap tempBM;
 
-    image->asLegacyBitmap(&tempBM, SkImage::kRO_LegacyBitmapMode);
+    image->asLegacyBitmap(&tempBM);
 
     // Let backends know we won't change this, so they don't have to deep copy it defensively.
     tempBM.setImmutable();
@@ -180,7 +175,7 @@ protected:
         sk_tool_utils::set_portable_typeface(&blackPaint);
         SkString title;
         title.printf("Bitmap size: %d x %d", gBmpSize, gBmpSize);
-        canvas->drawText(title.c_str(), title.size(), 0,
+        canvas->drawString(title, 0,
                          titleHeight, blackPaint);
 
         canvas->translate(0, SK_Scalar1 * kPadY / 2  + titleHeight);
@@ -199,7 +194,7 @@ protected:
                 blackPaint.setTextSize(SK_Scalar1 * 10);
                 SkScalar baseline = dstRect.height() +
                                     blackPaint.getTextSize() + SK_Scalar1 * 3;
-                canvas->drawText(label.c_str(), label.size(),
+                canvas->drawString(label,
                                     0, baseline,
                                     blackPaint);
                 blackPaint.setStyle(SkPaint::kStroke_Style);
@@ -229,10 +224,9 @@ protected:
             paint.setFilterQuality(kLow_SkFilterQuality);
 
             srcRect.setXYWH(1, 1, 3, 3);
-            paint.setMaskFilter(SkBlurMaskFilter::Make(
+            paint.setMaskFilter(SkMaskFilter::MakeBlur(
                 kNormal_SkBlurStyle,
-                SkBlurMask::ConvertRadiusToSigma(SkIntToScalar(5)),
-                SkBlurMaskFilter::kHighQuality_BlurFlag));
+                SkBlurMask::ConvertRadiusToSigma(SkIntToScalar(5))));
 
             sk_sp<SkImage> image(SkImage::MakeFromBitmap(bm));
             fProc(canvas, image.get(), bm, srcRect, dstRect, &paint);

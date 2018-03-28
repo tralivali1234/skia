@@ -8,9 +8,7 @@
 #include "Sk1DPathEffect.h"
 #include "Sk2DPathEffect.h"
 #include "SkAlphaThresholdFilter.h"
-#include "SkArcToPathEffect.h"
 #include "SkBlurImageFilter.h"
-#include "SkBlurMaskFilter.h"
 #include "SkCanvas.h"
 #include "SkColorFilter.h"
 #include "SkColorFilterImageFilter.h"
@@ -23,9 +21,7 @@
 #include "SkDisplacementMapEffect.h"
 #include "SkDropShadowImageFilter.h"
 #include "SkEmbossMaskFilter.h"
-#include "SkFlattenableSerialization.h"
 #include "SkImageSource.h"
-#include "SkLayerRasterizer.h"
 #include "SkLightingImageFilter.h"
 #include "SkLumaColorFilter.h"
 #include "SkMagnifierImageFilter.h"
@@ -39,6 +35,7 @@
 #include "SkPictureRecorder.h"
 #include "SkPoint3.h"
 #include "SkRandom.h"
+#include "SkRegion.h"
 #include "SkTableColorFilter.h"
 #include "SkTileImageFilter.h"
 #include "SkTypeface.h"
@@ -188,8 +185,8 @@ static SkBlurStyle make_blur_style() {
     return static_cast<SkBlurStyle>(R(kLastEnum_SkBlurStyle+1));
 }
 
-static SkBlurMaskFilter::BlurFlags make_blur_mask_filter_flag() {
-    return static_cast<SkBlurMaskFilter::BlurFlags>(R(SkBlurMaskFilter::kAll_BlurFlag+1));
+static bool make_blur_mask_filter_respectctm() {
+    return static_cast<bool>(R(2));
 }
 
 static SkFilterQuality make_filter_quality() {
@@ -197,7 +194,7 @@ static SkFilterQuality make_filter_quality() {
 }
 
 static SkFontStyle make_typeface_style() {
-    return SkFontStyle::FromOldStyle(SkTypeface::kBoldItalic+1);
+    return SkFontStyle::Normal();
 }
 
 static SkPath1DPathEffect::Style make_path_1d_path_effect_style() {
@@ -257,7 +254,7 @@ static void make_g_bitmap(SkBitmap& bitmap) {
     paint.setColor(0xFF884422);
     paint.setTextSize(SkIntToScalar(kBitmapSize/2));
     const char* str = "g";
-    canvas.drawText(str, strlen(str), SkIntToScalar(kBitmapSize/8),
+    canvas.drawString(str, SkIntToScalar(kBitmapSize/8),
                     SkIntToScalar(kBitmapSize/4), paint);
 }
 
@@ -339,7 +336,7 @@ static void drawSomething(SkCanvas* canvas) {
     canvas->drawCircle(SkIntToScalar(kBitmapSize/2), SkIntToScalar(kBitmapSize/2), SkIntToScalar(kBitmapSize/3), paint);
     paint.setColor(SK_ColorBLACK);
     paint.setTextSize(SkIntToScalar(kBitmapSize/3));
-    canvas->drawText("Picture", 7, SkIntToScalar(kBitmapSize/2), SkIntToScalar(kBitmapSize/4), paint);
+    canvas->drawString("Picture", SkIntToScalar(kBitmapSize/2), SkIntToScalar(kBitmapSize/4), paint);
 }
 
 static void rand_color_table(uint8_t* table) {
@@ -417,9 +414,9 @@ static sk_sp<SkPathEffect> make_path_effect(bool canBeNull = true) {
     sk_sp<SkPathEffect> pathEffect;
     if (canBeNull && (R(3) == 1)) { return pathEffect; }
 
-    switch (R(9)) {
+    switch (R(8)) {
         case 0:
-            pathEffect = SkArcToPathEffect::Make(make_scalar(true));
+            pathEffect = SkPath2DPathEffect::Make(make_matrix(), make_path());
             break;
         case 1:
             pathEffect = SkPathEffect::MakeCompose(make_path_effect(false),
@@ -448,9 +445,6 @@ static sk_sp<SkPathEffect> make_path_effect(bool canBeNull = true) {
             pathEffect = SkLine2DPathEffect::Make(make_scalar(), make_matrix());
             break;
         case 7:
-            pathEffect = SkPath2DPathEffect::Make(make_matrix(), make_path());
-            break;
-        case 8:
         default:
             pathEffect = SkPathEffect::MakeSum(make_path_effect(false),
                                                make_path_effect(false));
@@ -463,8 +457,8 @@ static sk_sp<SkMaskFilter> make_mask_filter() {
     sk_sp<SkMaskFilter> maskFilter;
     switch (R(3)) {
         case 0:
-            maskFilter = SkBlurMaskFilter::Make(make_blur_style(), make_scalar(),
-                                                make_blur_mask_filter_flag());
+            maskFilter = SkMaskFilter::MakeBlur(make_blur_style(), make_scalar(),
+                                                make_blur_mask_filter_respectctm());
         case 1: {
             SkEmbossMaskFilter::Light light;
             for (int i = 0; i < 3; ++i) {
@@ -515,13 +509,6 @@ static SkPaint make_paint() {
                                                    make_typeface_style()));
     }
 
-    SkLayerRasterizer::Builder rasterizerBuilder;
-    SkPaint paintForRasterizer;
-    if (R(2) == 1) {
-        paintForRasterizer = make_paint();
-    }
-    rasterizerBuilder.addLayer(paintForRasterizer);
-    paint.setRasterizer(rasterizerBuilder.detach());
     paint.setImageFilter(make_image_filter());
     sk_sp<SkData> data(make_3Dlut(nullptr, make_bool(), make_bool(), make_bool()));
     paint.setTextAlign(make_paint_align());
@@ -554,8 +541,7 @@ static sk_sp<SkImageFilter> make_image_filter(bool canBeNull) {
         break;
     case MERGE:
         filter = SkMergeImageFilter::Make(make_image_filter(),
-                                          make_image_filter(),
-                                          make_xfermode());
+                                          make_image_filter());
         break;
     case COLOR: {
         sk_sp<SkColorFilter> cf(make_color_filter());
@@ -727,7 +713,7 @@ static sk_sp<SkImageFilter> make_image_filter(bool canBeNull) {
 
 static sk_sp<SkImageFilter> make_serialized_image_filter() {
     sk_sp<SkImageFilter> filter(make_image_filter(false));
-    sk_sp<SkData> data(SkValidatingSerializeFlattenable(filter.get()));
+    sk_sp<SkData> data(filter->serialize());
     const unsigned char* ptr = static_cast<const unsigned char*>(data->data());
     size_t len = data->size();
 #ifdef SK_ADD_RANDOM_BIT_FLIPS
@@ -752,7 +738,7 @@ static sk_sp<SkImageFilter> make_serialized_image_filter() {
         }
     }
 #endif // SK_ADD_RANDOM_BIT_FLIPS
-    return SkValidatingDeserializeImageFilter(ptr, len);
+    return SkImageFilter::Deserialize(ptr, len);
 }
 
 static void drawClippedBitmap(SkCanvas* canvas, int x, int y, const SkPaint& paint) {
@@ -809,7 +795,6 @@ protected:
 
     virtual void onDrawContent(SkCanvas* canvas) {
         do_fuzz(canvas);
-        this->inval(0);
     }
 
 private:

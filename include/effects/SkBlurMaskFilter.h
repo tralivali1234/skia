@@ -10,17 +10,15 @@
 
 // we include this since our callers will need to at least be able to ref/unref
 #include "SkMaskFilter.h"
+#include "SkRect.h"
 #include "SkScalar.h"
 #include "SkBlurTypes.h"
 
+class SkRRect;
+
 class SK_API SkBlurMaskFilter {
 public:
-    /**
-     *  If radius > 0, return the corresponding sigma, else return 0. Use this to convert from the
-     *  (legacy) idea of specify the blur "radius" to the standard notion of specifying its sigma.
-     */
-    static SkScalar ConvertRadiusToSigma(SkScalar radius);
-
+#ifdef SK_SUPPORT_LEGACY_BLURMASKFILTER
     enum BlurFlags {
         kNone_BlurFlag              = 0x00,
         /** The blur layer's radius is not affected by transforms */
@@ -47,6 +45,7 @@ public:
                                     uint32_t flags = kNone_BlurFlag) {
         return Make(style, sigma, SkRect::MakeEmpty(), flags);
     }
+#endif
 
 #ifdef SK_SUPPORT_LEGACY_EMBOSSMASKFILTER
     /** Create an emboss maskfilter
@@ -61,32 +60,10 @@ public:
                                           SkScalar ambient, SkScalar specular);
 #endif
 
-    static const int kMaxDivisions = 6;
-
-    // This method computes all the parameters for drawing a partially occluded nine-patched
-    // blurred rrect mask:
-    //   rrectToDraw - the integerized rrect to draw in the mask
-    //   widthHeight - how large to make the mask (rrectToDraw will be centered in this coord sys)
-    //   rectXs, rectYs - the x & y coordinates of the covering geometry lattice
-    //   texXs, texYs - the texture coordinate at each point in rectXs & rectYs
-    //   numXs, numYs - number of coordinates in the x & y directions
-    //   skipMask - bit mask that contains a 1-bit whenever one of the cells is occluded
-    // It returns true if 'devRRect' is nine-patchable
-    static bool ComputeBlurredRRectParams(const SkRRect& srcRRect, const SkRRect& devRRect,
-                                          const SkRect& occluder,
-                                          SkScalar sigma, SkScalar xformedSigma,
-                                          SkRRect* rrectToDraw,
-                                          SkISize* widthHeight,
-                                          SkScalar rectXs[kMaxDivisions],
-                                          SkScalar rectYs[kMaxDivisions],
-                                          SkScalar texXs[kMaxDivisions],
-                                          SkScalar texYs[kMaxDivisions],
-                                          int* numXs, int* numYs, uint32_t* skipMask);
-
-    SK_DECLARE_FLATTENABLE_REGISTRAR_GROUP()
-
+#ifdef SK_SUPPORT_LEGACY_BLURMASKFILTER
 private:
     SkBlurMaskFilter(); // can't be instantiated
+#endif
 };
 
 #endif
